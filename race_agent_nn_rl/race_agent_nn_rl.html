@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NN con RL - Agente di Guida</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; color: #333; }
+        header { background-color: #fff; padding: 15px 30px; border-bottom: 1px solid #ddd; text-align: center; }
+        header h1 { margin: 0; font-size: 2em; color: #0056b3; }
+        header h2 { margin: 5px 0; font-size: 1.2em; color: #555; }
+        header p { margin: 0; color: #777; }
+        main { display: flex; flex-wrap: wrap; padding: 20px; gap: 20px; }
+        #simulation-container { flex: 3; display: flex; flex-direction: column; align-items: center; min-width: 600px; }
+        #trackCanvas { background-color: #d0d0d0; border: 1px solid #ccc; max-width: 100%; height: auto; }
+        #info-container { flex: 1; display: flex; flex-direction: column; gap: 15px; min-width: 300px; }
+        .info-box { background-color: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .info-box h3 { margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        #time-date, #training-progress, #lap-info { font-size: 1.1em; }
+        #last-laps-container { max-height: 150px; overflow-y: auto; }
+        .slider-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .slider-row label { flex-basis: 60%; font-size: 0.9em;}
+        .slider-row input { flex-basis: 30%; }
+        .slider-row span { flex-basis: 10%; text-align: right; font-weight: bold; }
+        footer { position: fixed; bottom: 0; width: 100%; background-color: #333; color: #fff; padding: 10px 20px; display: flex; align-items: center; gap: 20px; box-sizing: border-box; }
+        #console { flex-grow: 1; font-family: 'Courier New', Courier, monospace; font-size: 0.9em; }
+        button { padding: 8px 15px; border: none; background-color: #007bff; color: white; border-radius: 5px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Simulazione di Guida con Reinforcement Learning</h1>
+        <h2>Agente Neurale che Impara a Percorrere un Tracciato</h2>
+        <p>Università degli Studi di Padova - Prof. Rossi</p>
+    </header>
+
+    <main>
+        <div id="simulation-container">
+            <canvas id="trackCanvas" width="800" height="600"></canvas>
+        </div>
+        <div id="info-container">
+            <div class="info-box" id="time-date-box">
+                <h3>Orologio e Data</h3>
+                <div id="time-date"></div>
+            </div>
+             <div class="info-box" id="reward-tuning-box">
+                <h3>Pannello di Controllo Ricompense</h3>
+                <div class="slider-row">
+                    <label for="speed-weight">Peso Velocità:</label>
+                    <input type="range" id="speed-weight" min="0" max="20" value="1.0" step="0.5">
+                    <span id="speed-weight-value">1.0</span>
+                </div>
+                <div class="slider-row">
+                    <label for="centerline-penalty">Penalità Centro Pista:</label>
+                    <input type="range" id="centerline-penalty" min="0" max="10" value="0.1" step="0.2">
+                    <span id="centerline-penalty-value">0.1</span>
+                </div>
+                <div class="slider-row">
+                    <label for="lap-reward">Ricompensa Giro:</label>
+                    <input type="range" id="lap-reward" min="0" max="1000" value="50" step="50">
+                    <span id="lap-reward-value">50</span>
+                </div>
+                <div class="slider-row">
+                    <label for="fastest-lap-bonus">Bonus Giro Veloce:</label>
+                    <input type="range" id="fastest-lap-bonus" min="0" max="2000" value="100" step="100">
+                    <span id="fastest-lap-bonus-value">100</span>
+                </div>
+            </div>
+            <div class="info-box" id="training-progress-box">
+                <h3>Progresso Addestramento</h3>
+                <div id="training-progress">Addestramento #0</div>
+            </div>
+            <div class="info-box" id="loss-chart-container">
+                <h3>Funzione di Loss (Errore)</h3>
+                <canvas id="lossChart"></canvas>
+            </div>
+            <div class="info-box" id="lap-info-box">
+                <h3>Giro Corrente</h3>
+                <div id="lap-info">Tempo: 0.0s | Miglior Tempo: N/A</div>
+            </div>
+             <div class="info-box" id="last-laps-box">
+                <h3>Ultimi Giri</h3>
+                <div id="last-laps-container"></div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div id="console">Console: Inizializzazione della simulazione...</div>
+        <div class="slider-container" style="color: white; display: flex; align-items: center; gap: 10px;">
+            <label for="speed-slider">Velocità Sim:</label>
+            <input type="range" id="speed-slider" min="1" max="20" value="1">
+        </div>
+        <button id="save-weights">Salva Pesi</button>
+        <input type="file" id="load-weights-input" accept=".json" style="display: none;">
+        <button onclick="document.getElementById('load-weights-input').click();">Carica Pesi</button>
+    </footer>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- Elementi DOM e Controlli UI ---
+        const canvas = document.getElementById('trackCanvas'), ctx = canvas.getContext('2d');
+        const consoleEl = document.getElementById('console'), timeDateEl = document.getElementById('time-date');
+        const trainingProgressEl = document.getElementById('training-progress'), lapInfoEl = document.getElementById('lap-info');
+        const lastLapsContainer = document.getElementById('last-laps-container');
+        const simSpeedSlider = document.getElementById('speed-slider'), saveButton = document.getElementById('save-weights'), loadInput = document.getElementById('load-weights-input');
+        const speedWeightSlider = document.getElementById('speed-weight'), centerlinePenaltySlider = document.getElementById('centerline-penalty');
+        const lapRewardSlider = document.getElementById('lap-reward'), fastestLapBonusSlider = document.getElementById('fastest-lap-bonus');
+        const speedWeightValue = document.getElementById('speed-weight-value'), centerlinePenaltyValue = document.getElementById('centerline-penalty-value');
+        const lapRewardValue = document.getElementById('lap-reward-value'), fastestLapBonusValue = document.getElementById('fastest-lap-bonus-value');
+        
+        // --- Parametri di Simulazione e Ricompense ---
+        let simulationSpeed = 1, trainingCount = 0, bestLapTime = Infinity, lastLapTimes = [];
+        let rewardWeights = {
+            speed: parseFloat(speedWeightSlider.value),
+            centerlinePenalty: parseFloat(centerlinePenaltySlider.value),
+            lapCompletion: parseFloat(lapRewardSlider.value),
+            fastestLap: parseFloat(fastestLapBonusSlider.value)
+        };
+
+        // --- Gestione Eventi ---
+        function setupEventListeners() {
+            simSpeedSlider.addEventListener('input', e => { simulationSpeed = parseInt(e.target.value); consoleEl.textContent = `Velocità di simulazione impostata a ${simulationSpeed}x.`; });
+            function setupSliderListener(slider, valueSpan, weightKey) { slider.addEventListener('input', e => { const value = parseFloat(e.target.value); rewardWeights[weightKey] = value; valueSpan.textContent = value.toFixed(1); }); }
+            setupSliderListener(speedWeightSlider, speedWeightValue, 'speed');
+            setupSliderListener(centerlinePenaltySlider, centerlinePenaltyValue, 'centerlinePenalty');
+            setupSliderListener(lapRewardSlider, lapRewardValue, 'lapCompletion');
+            setupSliderListener(fastestLapBonusSlider, fastestLapBonusValue, 'fastestLap');
+            saveButton.addEventListener('click', () => { trainingCount++; const weights = dqn.getWeights(); const blob = new Blob([weights], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `agent_weights_${trainingCount}.json`; a.click(); URL.revokeObjectURL(url); trainingProgressEl.textContent = `Addestramento #${trainingCount} (salvato)`; consoleEl.textContent = `Pesi salvati in agent_weights_${trainingCount}.json.`; });
+            loadInput.addEventListener('change', (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (event) => { try { dqn.loadWeights(event.target.result); trainingProgressEl.textContent = `Addestramento #${trainingCount} (caricato)`; consoleEl.textContent = `Pesi caricati con successo da ${file.name}.`; agent.reset(); } catch (error) { consoleEl.textContent = `Errore nel caricamento del file: ${error.message}`; } }; reader.readAsText(file); });
+        }
+        
+        // --- Orologio e Data ---
+        function updateClock() { const now = new Date(); timeDateEl.textContent = now.toLocaleDateString('it-IT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + ' - ' + now.toLocaleTimeString('it-IT'); }
+        
+        // --- Logica Tracciato ---
+        const trackWidth = 50, scale = 150;
+        const centerX = canvas.width / 2, centerY = canvas.height / 2;
+        const curve = { x: t => centerX + scale * Math.sin(t), y: t => centerY + scale * Math.sin(t) * Math.cos(t), dx: t => scale * Math.cos(t), dy: t => scale * (Math.cos(2*t)), };
+        const T_MAX = 2 * Math.PI, NUM_POINTS = 200;
+        const trackPoints = Array.from({length: NUM_POINTS + 1}, (_, i) => { const t = (i / NUM_POINTS) * T_MAX; return {x: curve.x(t), y: curve.y(t)}; });
+        function getFrenetFrame(t) { const dx = curve.dx(t), dy = curve.dy(t); const magnitude = Math.sqrt(dx * dx + dy * dy) || 1; const Tx = dx / magnitude, Ty = dy / magnitude; return { T: { x: Tx, y: Ty }, N: { x: -Ty, y: Tx } }; }
+        function drawTrack() { ctx.fillStyle = '#c0c0c0'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.strokeStyle = '#666'; ctx.lineWidth = trackWidth; ctx.beginPath(); ctx.moveTo(trackPoints[0].x, trackPoints[0].y); trackPoints.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.stroke(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.setLineDash([10, 10]); ctx.beginPath(); ctx.moveTo(trackPoints[0].x, trackPoints[0].y); trackPoints.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.closePath(); ctx.stroke(); ctx.setLineDash([]); }
+
+        // --- Classe Agente (con modifiche per giri continui) ---
+        class Agent {
+            constructor() { this.width = 10; this.height = 20; this.lapTraces = []; this.reset(); }
+            
+            // Reset completo solo dopo un crash
+            reset() { this.t = 0.1; this.d = 0; this.speed = 1; this.angle = 0; this.startNewLap(); this.updatePosition(); }
+            
+            // Inizia un nuovo giro (resetta solo timer e tracciato parziale)
+            startNewLap() { this.lapStartTime = performance.now(); this.currentTrace = []; }
+            
+            update(action) {
+                if (action === 0) this.speed = Math.min(3, this.speed + 0.1);
+                if (action === 1) this.speed = Math.max(0.5, this.speed - 0.1);
+                if (action === 2) this.d = Math.max(-trackWidth / 2 + this.width/2, this.d - 2);
+                if (action === 3) this.d = Math.min(trackWidth / 2 - this.width/2, this.d + 2);
+                this.t += 0.005 * this.speed;
+                const completedLap = this.t >= T_MAX;
+                if (completedLap) this.t -= T_MAX;
+                this.updatePosition();
+                if(frameCount % 5 === 0) this.currentTrace.push({x: this.x, y: this.y});
+                return completedLap;
+            }
+            
+            updatePosition() { const pos_center = { x: curve.x(this.t), y: curve.y(this.t) }; const frame = getFrenetFrame(this.t); this.x = pos_center.x + frame.N.x * this.d; this.y = pos_center.y + frame.N.y * this.d; this.angle = Math.atan2(frame.T.y, frame.T.x); }
+            draw() { ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle); ctx.fillStyle = '#007bff'; ctx.fillRect(-this.height / 2, -this.width / 2, this.height, this.width); ctx.strokeStyle = 'black'; ctx.strokeRect(-this.height / 2, -this.width / 2, this.height, this.width); ctx.restore(); }
+            drawTraces() { ctx.save(); this.lapTraces.forEach((trace, i) => { const opacity = 1 - (i / this.lapTraces.length) * 0.9; ctx.strokeStyle = `rgba(0, 123, 255, ${opacity})`; ctx.lineWidth = 2; ctx.beginPath(); if(trace.length > 0) ctx.moveTo(trace[0].x, trace[0].y); trace.slice(1).forEach(p => ctx.lineTo(p.x, p.y)); ctx.stroke(); }); ctx.restore(); }
+            getState() { return [...this.getSensorDistances(), this.speed / 3.0]; }
+            getSensorDistances(numSensors=5, maxDist=100) { const distances = []; const angles = [-Math.PI/2, -Math.PI/4, 0, Math.PI/4, Math.PI/2]; for(let i=0; i<numSensors; i++){ let dist = 0; const angle = this.angle + angles[i]; while(dist < maxDist) { const px = this.x + Math.cos(angle) * dist; const py = this.y + Math.sin(angle) * dist; if(px <= 0 || px >= canvas.width || py <= 0 || py >= canvas.height) break; const pixelData = ctx.getImageData(Math.round(px), Math.round(py), 1, 1).data; if(pixelData[0] === 192) break; dist += 2; } distances.push(dist/maxDist); } return distances; }
+        }
+
+        // --- Classe DQN (invariata) ---
+        class DQN { constructor(inputSize, outputSize) { this.inputSize = inputSize; this.outputSize = outputSize; this.learningRate = 0.001; this.gamma = 0.95; this.epsilon = 1.0; this.epsilonDecay = 0.995; this.epsilonMin = 0.01; this.memory = []; this.batchSize = 32; this.weights1 = this.initWeights(inputSize, 24); this.biases1 = new Array(24).fill(0); this.weights2 = this.initWeights(24, 24); this.biases2 = new Array(24).fill(0); this.weights3 = this.initWeights(24, outputSize); this.biases3 = new Array(outputSize).fill(0); } initWeights(rows, cols) { return Array.from({ length: rows }, () => Array.from({ length: cols }, () => Math.random() * 0.2 - 0.1)); } forward(state) { let l1 = this.matMul([state], this.weights1)[0].map((v, i) => Math.max(0, v + this.biases1[i])); let l2 = this.matMul([l1], this.weights2)[0].map((v, i) => Math.max(0, v + this.biases2[i])); return this.matMul([l2], this.weights3)[0].map((v, i) => v + this.biases3[i]); } matMul(a, b) { let r = Array(a.length).fill(0).map(() => Array(b[0].length).fill(0)); for (let i = 0; i < a.length; i++) for (let j = 0; j < b[0].length; j++) for (let k = 0; k < a[0].length; k++) r[i][j] += a[i][k] * b[k][j]; return r; } act(state) { if (Math.random() <= this.epsilon) return Math.floor(Math.random() * this.outputSize); const qValues = this.forward(state); return qValues.indexOf(Math.max(...qValues)); } remember(state, action, reward, nextState, done) { this.memory.push({ state, action, reward, nextState, done }); if (this.memory.length > 10000) this.memory.shift(); } replay() { if (this.memory.length < this.batchSize) return 0; const minibatch = []; for (let i = 0; i < this.batchSize; i++) minibatch.push(this.memory[Math.floor(Math.random() * this.memory.length)]); let totalLoss = 0; for (const { state, action, reward, nextState, done } of minibatch) { let target = reward; if (!done) target = reward + this.gamma * Math.max(...this.forward(nextState)); const qValues = this.forward(state); totalLoss += Math.pow(target - qValues[action], 2); const error = target - qValues[action]; const l1_out = this.matMul([state], this.weights1)[0].map((v, i) => Math.max(0, v + this.biases1[i])); const l2_out = this.matMul([l1_out], this.weights2)[0].map((v, i) => Math.max(0, v + this.biases2[i])); for (let j = 0; j < this.weights3.length; j++) this.weights3[j][action] -= this.learningRate * l2_out[j] * -error; this.biases3[action] -= this.learningRate * -error; } if (this.epsilon > this.epsilonMin) this.epsilon *= this.epsilonDecay; return totalLoss / this.batchSize; } getWeights() { return JSON.stringify({ w1: this.weights1, b1: this.biases1, w2: this.weights2, b2: this.biases2, w3: this.weights3, b3: this.biases3, eps: this.epsilon, tCount: trainingCount }); } loadWeights(json) { const data = JSON.parse(json); this.weights1 = data.w1; this.biases1 = data.b1; this.weights2 = data.w2; this.biases2 = data.b2; this.weights3 = data.w3; this.biases3 = data.b3; this.epsilon = data.eps || this.epsilonMin; trainingCount = data.tCount || 0; } }
+        
+        // --- Grafico Loss ---
+        const lossCtx = document.getElementById('lossChart').getContext('2d');
+        const lossChart = new Chart(lossCtx, { type: 'line', data: { labels: [], datasets: [{ label: 'Loss', data: [], borderColor: 'rgba(255, 99, 132, 1)', borderWidth: 1, fill: false, pointRadius: 0 }] }, options: { scales: { x: { display: false }, y: { beginAtZero: true } }, animation: false, plugins: { legend: { display: false }, tooltip: { enabled: true } } } });
+        let lossDataPoints = [];
+        function updateLossChart(loss) { lossDataPoints.push(loss); if (lossDataPoints.length > 500) lossDataPoints.shift(); if (frameCount % 10 === 0) { lossChart.data.labels = lossDataPoints.map((_, i) => i); lossChart.data.datasets[0].data = lossDataPoints; lossChart.update(); } }
+
+        // --- Logica Principale di Simulazione ---
+        const agent = new Agent();
+        const dqn = new DQN(6, 4);
+        let frameCount = 0;
+
+        function gameLoop() {
+            drawTrack();
+            agent.drawTraces();
+
+            for (let i = 0; i < simulationSpeed; i++) {
+                const state = agent.getState();
+                const action = dqn.act(state);
+                const completedLap = agent.update(action);
+                
+                let reward = 0;
+                let done = false;
+
+                // Calcolo ricompensa continua (velocità e distanza dal centro)
+                reward += (agent.speed - 1.0) * rewardWeights.speed;
+                const normalizedDeviation = Math.abs(agent.d) / (trackWidth / 2);
+                reward -= normalizedDeviation * rewardWeights.centerlinePenalty;
+
+                // Controllo Collisioni (stato terminale)
+                if (Math.abs(agent.d) > (trackWidth / 2 - agent.width / 2)) {
+                    reward = -20;
+                    done = true; // L'episodio termina solo in caso di crash
+                }
+
+                // Controllo Completamento Giro (NON è uno stato terminale)
+                if (completedLap) {
+                    const lapTime = (performance.now() - agent.lapStartTime) / 1000;
+                    reward += rewardWeights.lapCompletion;
+
+                    if (lapTime < bestLapTime) {
+                        reward += rewardWeights.fastestLap;
+                        bestLapTime = lapTime;
+                        consoleEl.textContent = `Nuovo record! ${lapTime.toFixed(2)}s`;
+                    }
+                    
+                    lastLapTimes.unshift(lapTime.toFixed(2));
+                    if(lastLapTimes.length > 10) lastLapTimes.pop();
+                    agent.lapTraces.unshift(agent.currentTrace);
+                    if(agent.lapTraces.length > 10) agent.lapTraces.pop();
+
+                    agent.startNewLap(); // Reset del timer di giro, non dell'agente!
+                }
+                
+                const nextState = agent.getState();
+                dqn.remember(state, action, reward, nextState, done);
+
+                const loss = dqn.replay();
+                if (isFinite(loss)) updateLossChart(loss);
+
+                if (done) {
+                    agent.reset(); // Reset completo solo dopo un crash
+                }
+            }
+            
+            agent.draw();
+            frameCount++;
+            requestAnimationFrame(gameLoop);
+        }
+
+        function updateLapInfo() {
+            const currentLapTime = ((performance.now() - agent.lapStartTime) / 1000).toFixed(1);
+            const bestTimeStr = bestLapTime === Infinity ? 'N/A' : bestLapTime.toFixed(2) + 's';
+            lapInfoEl.textContent = `Tempo: ${currentLapTime}s | Miglior Tempo: ${bestTimeStr}`;
+            lastLapsContainer.innerHTML = lastLapTimes.map((time, i) => `<div>Giro ${i+1}: ${time}s</div>`).join('');
+        }
+
+        // --- Inizializzazione ---
+        setupEventListeners();
+        lapRewardValue.textContent = rewardWeights.lapCompletion;
+        fastestLapBonusValue.textContent = rewardWeights.fastestLap;
+        setInterval(updateClock, 1000);
+        updateClock();
+        consoleEl.textContent = 'Simulazione avviata. L\'agente ora apprende in modo continuo.';
+        setInterval(updateLapInfo, 200);
+        gameLoop();
+    });
+    </script>
+</body>
+</html>
