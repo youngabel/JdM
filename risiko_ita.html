@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RisiKo Italia (vs IA)</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+     crossorigin=""/>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        h1 {
+            text-align: center;
+            margin: 10px 0;
+            flex-shrink: 0;
+        }
+        #container {
+            display: flex;
+            flex-wrap: wrap;
+            width: 100%;
+            flex-grow: 1; /* Occupa lo spazio rimanente */
+            min-height: 0;
+        }
+        #mappa {
+            flex: 3;
+            height: 100%;
+            min-width: 300px;
+            border: 2px solid #333;
+            background-color: #dcdcdc;
+        }
+        #game-info {
+            flex: 1;
+            height: 100%;
+            min-width: 280px;
+            padding: 15px;
+            background-color: #fff;
+            border: 2px solid #333;
+            overflow-y: auto;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+        #game-info h2 {
+            border-bottom: 2px solid #ccc;
+            padding-bottom: 5px;
+            margin-top: 10px;
+        }
+        #info-regione {
+            font-size: 1.1em;
+            padding: 10px;
+            background-color: #e9e9e9;
+            border-radius: 5px;
+        }
+        #info-azioni button {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 1em;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+        }
+        #info-azioni button.attack { background-color: #f44336; }
+        #info-azioni button.reinforce { background-color: #2196F3; }
+        #info-azioni button.move { background-color: #009688; }
+        #info-azioni button.disabled { background-color: #9E9E9E; cursor: not-allowed; }
+
+        #controlli-gioco {
+            margin-top: auto; /* Spinge in fondo */
+            padding-top: 15px;
+            border-top: 2px solid #eee;
+        }
+        #controlli-gioco button {
+            width: 100%;
+            padding: 12px;
+            font-size: 1.1em;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #controlli-gioco button:disabled {
+            background-color: #aaa;
+        }
+        .slider-container {
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+        }
+        .slider-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8em;
+            color: #555;
+        }
+        #info-obiettivo {
+            padding: 10px;
+            background-color: #e3f2fd;
+            border: 1px dashed #1e88e5;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>RisiKo Italia (Utente vs IA)</h1>
+    
+    <div id="container">
+        <div id="mappa">
+             <h2 style="text-align: center; padding: 20px;">Caricamento confini regionali...</h2>
+        </div>
+
+        <div id="game-info">
+            <div>
+                <h2>Turno e Fase</h2>
+                <div id="info-turno" style="font-weight: bold; font-size: 1.2em;">
+                    Turno: <span id="giocatore-corrente">...</span>
+                </div>
+                <div style="font-size: 1.1em;">
+                    Fase: <span id="fase-corrente" style="font-weight: bold;">...</span>
+                </div>
+                <div>Armate da piazzare: <span id="armate-rinforzo" style="font-weight: bold;">0</span></div>
+            </div>
+            
+            <h2>Info Selezione</h2>
+            <div id="info-regione">
+                Seleziona una regione sulla mappa.
+            </div>
+
+            <h2>Azioni Possibili</h2>
+            <div id="info-azioni">
+                </div>
+
+            <div id="controlli-gioco">
+                <div id="info-obiettivo">
+                    Obiettivo: ...
+                </div>
+                
+                <div class="slider-container">
+                    <label for="slider-obiettivo">Obiettivo Territori:</label>
+                    <input type="range" id="slider-obiettivo" min="0.4" max="1.0" value="0.83" step="0.01">
+                    <div class="slider-labels">
+                        <span>Pochi (40%)</span>
+                        <span id="label-obiettivo-val">5/6 (83%)</span>
+                        <span>Tutti (100%)</span>
+                    </div>
+                </div>
+
+                <div class="slider-container">
+                    <label for="slider-bias">Sbilanciamento Battaglia:</label>
+                    <input type="range" id="slider-bias" min="-2" max="2" value="0" step="1">
+                    <div class="slider-labels">
+                        <span>Difesa (+2)</span>
+                        <span>Neutro</span>
+                        <span>Attacco (+2)</span>
+                    </div>
+                </div>
+
+                <button id="btn-termina-fase" onclick="terminaFase()">Termina Fase</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+     integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+     crossorigin=""></script>
+
+    <script>
+        // --- INIZIO CONFIGURAZIONE GIOCO ---
+
+        const GEOJSON_URL = "https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson";
+        const NOME_PROPRIETA_REGIONE = "reg_name";
+        
+        // Definizioni Giocatori
+        const PLAYER_USER = "Giocatore (Blu)";
+        const PLAYER_AI = "Computer (Rosso)";
+        const PLAYER_NEUTRAL = "Neutrali (Grigio)";
+        
+        // Mappa dei confini (essenziale per la logica di attacco/spostamento)
+        // Include "ponti" marittimi per Sardegna e Sicilia
+        const MAPPA_CONFINI = {
+            "Valle d'Aosta": ["Piemonte"],
+            "Piemonte": ["Valle d'Aosta", "Lombardia", "Emilia-Romagna", "Liguria"],
+            "Lombardia": ["Piemonte", "Trentino-Alto Adige", "Veneto", "Emilia-Romagna"],
+            "Trentino-Alto Adige": ["Lombardia", "Veneto"],
+            "Veneto": ["Trentino-Alto Adige", "Lombardia", "Emilia-Romagna", "Friuli-Venezia Giulia"],
+            "Friuli-Venezia Giulia": ["Veneto"],
+            "Liguria": ["Piemonte", "Emilia-Romagna", "Toscana"],
+            "Emilia-Romagna": ["Piemonte", "Lombardia", "Veneto", "Liguria", "Toscana", "Marche"],
+            "Toscana": ["Liguria", "Emilia-Romagna", "Marche", "Umbria", "Lazio", "Sardegna"], // Ponte
+            "Marche": ["Emilia-Romagna", "Toscana", "Umbria", "Lazio", "Abruzzo"],
+            "Umbria": ["Toscana", "Marche", "Lazio"],
+            "Lazio": ["Toscana", "Umbria", "Marche", "Abruzzo", "Molise", "Campania", "Sardegna"], // Ponte
+            "Abruzzo": ["Marche", "Lazio", "Molise"],
+            "Molise": ["Abruzzo", "Lazio", "Campania", "Puglia"],
+            "Campania": ["Lazio", "Molise", "Puglia", "Basilicata"],
+            "Puglia": ["Molise", "Campania", "Basilicata"],
+            "Basilicata": ["Campania", "Puglia", "Calabria"],
+            "Calabria": ["Basilicata", "Sicilia"], // Ponte
+            "Sicilia": ["Calabria"], // Ponte
+            "Sardegna": ["Lazio", "Toscana"] // Ponte
+        };
+
+        // --- FINE CONFIGURAZIONE GIOCO ---
+
+        // Variabili globali di gioco
+        let map;
+        let geoJsonLayer;
+        let statoGioco = {};
+        let giocatoreDiTurno = PLAYER_USER;
+        let armateDaPiazzare = 0;
+        let faseTurno = "AVVIO"; // RINFORZO, ATTACCO_SPOSTAMENTO, TURNO_IA
+        let regioneSorgente = null; // Per logica attacco/spostamento
+        let totaleRegioni = 0;
+        let sogliaVittoria = 0;
+
+        // Riferimenti agli elementi HTML
+        const divInfoRegione = document.getElementById('info-regione');
+        const divInfoAzioni = document.getElementById('info-azioni');
+        const divRegole = document.getElementById('regole');
+        const spanGiocatoreCorrente = document.getElementById('giocatore-corrente');
+        const spanFaseCorrente = document.getElementById('fase-corrente');
+        const spanArmateRinforzo = document.getElementById('armate-rinforzo');
+        const divMappa = document.getElementById('mappa');
+        const btnTerminaFase = document.getElementById('btn-termina-fase');
+        const sliderBias = document.getElementById('slider-bias');
+        const sliderObiettivo = document.getElementById('slider-obiettivo');
+        const labelObiettivoVal = document.getElementById('label-obiettivo-val');
+        const divInfoObiettivo = document.getElementById('info-obiettivo');
+
+        
+        // AVVIO GIOCO
+        document.addEventListener('DOMContentLoaded', () => {
+            sliderObiettivo.oninput = aggiornaTestoObiettivo;
+            caricaDatiGeoJSON();
+        });
+
+        /**
+         * Carica i dati GeoJSON dall'API
+         */
+        async function caricaDatiGeoJSON() {
+            try {
+                const response = await fetch(GEOJSON_URL);
+                if (!response.ok) throw new Error(`Errore HTTP! Status: ${response.status}`);
+                const geojsonDatiRegioni = await response.json();
+                
+                divMappa.innerHTML = "";
+                initGame(geojsonDatiRegioni);
+
+            } catch (error) {
+                console.error("Impossibile caricare GeoJSON:", error);
+                divMappa.innerHTML = `<h2 style="color:red; text-align:center;">ERRORE: Impossibile caricare i dati della mappa.</h2>`;
+            }
+        }
+
+        /**
+         * Inizializza tutto il gioco
+         */
+        function initGame(geojsonDati) {
+            totaleRegioni = geojsonDati.features.length;
+            aggiornaTestoObiettivo();
+            inizializzaStatoGioco(geojsonDati);
+            initMappa(geojsonDati);
+            iniziaTurno(PLAYER_USER);
+        }
+        
+        /**
+         * Aggiorna l'obiettivo in base allo slider
+         */
+        function aggiornaTestoObiettivo() {
+            const percentuale = parseFloat(sliderObiettivo.value);
+            sogliaVittoria = Math.floor(totaleRegioni * percentuale);
+            const frazione = Math.round(totaleRegioni * percentuale);
+            
+            labelObiettivoVal.innerText = `${frazione}/${totaleRegioni} (${Math.round(percentuale * 100)}%)`;
+            divInfoObiettivo.innerText = `Obiettivo: Controlla ${sogliaVittoria} territori.`;
+        }
+
+        /**
+         * Inizializza la mappa Leaflet
+         */
+        function initMappa(geojsonDati) {
+            map = L.map('mappa').setView([42.5, 12.5], 6);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
+                subdomains: 'abcd'
+            }).addTo(map);
+
+            geoJsonLayer = L.geoJson(geojsonDati, {
+                style: styleRegione,
+                onEachFeature: onEachFeature
+            }).addTo(map);
+        }
+
+        /**
+        * Inizializza lo stato del gioco (assegnazione iniziale)
+        */
+        function inizializzaStatoGioco(geojsonDati) {
+            const nomiRegioni = geojsonDati.features.map(f => f.properties[NOME_PROPRIETA_REGIONE]);
+            nomiRegioni.sort(() => Math.random() - 0.5); // Mescola
+
+            const giocatoriIniziali = [PLAYER_USER, PLAYER_AI, PLAYER_NEUTRAL];
+            
+            nomiRegioni.forEach((nome, index) => {
+                // Assegna circa 1/3 a ciascuno
+                const proprietario = giocatoriIniziali[index % giocatoriIniziali.length];
+                let armateIniziali = 3;
+                if (proprietario === PLAYER_USER) armateIniziali = 4; // Piccolo bonus al giocatore
+                if (proprietario === PLAYER_NEUTRAL) armateIniziali = 2; // Neutrali più deboli
+                
+                statoGioco[nome] = {
+                    owner: proprietario,
+                    armies: armateIniziali
+                };
+            });
+        }
+
+        /**
+         * Stile delle regioni (colore proprietario)
+         */
+        function styleRegione(feature) {
+            const nomeRegione = feature.properties[NOME_PROPRIETA_REGIONE];
+            const proprietario = statoGioco[nomeRegione] ? statoGioco[nomeRegione].owner : PLAYER_NEUTRAL;
+            
+            let colore = "#AAAAAA"; // Grigio (Neutrale)
+            if (proprietario === PLAYER_USER) colore = "#428bca"; // Blu
+            else if (proprietario === PLAYER_AI) colore = "#d9534f"; // Rosso
+
+            return {
+                fillColor: colore,
+                weight: 2,
+                opacity: 1,
+                color: 'white',
+                dashArray: '3',
+                fillOpacity: 0.7
+            };
+        }
+
+        /**
+         * Aggiorna lo stile e i tooltip di tutta la mappa
+         */
+        function aggiornaMappa() {
+            if (!geoJsonLayer) return;
+            
+            // Aggiorna stili
+            geoJsonLayer.setStyle(styleRegione);
+
+            // Aggiorna Tooltip
+            geoJsonLayer.eachLayer(layer => {
+                const nomeRegione = layer.feature.properties[NOME_PROPRIETA_REGIONE];
+                const dati = statoGioco[nomeRegione];
+                if (dati) {
+                    layer.unbindTooltip();
+                    layer.bindTooltip(`<b>${nomeRegione}</b><br>${dati.owner}<br>Armate: ${dati.armies}`, {
+                        sticky: true
+                    });
+                }
+            });
+        }
+
+        /**
+         * Eventi per ogni regione (click e tooltip)
+         */
+        function onEachFeature(feature, layer) {
+            layer.on({
+                click: onRegioneClick
+            });
+            // Aggiunge tooltip iniziale
+             const nomeRegione = feature.properties[NOME_PROPRIETA_REGIONE];
+             const dati = statoGioco[nomeRegione];
+             if(dati) {
+                 layer.bindTooltip(`<b>${nomeRegione}</b><br>${dati.owner}<br>Armate: ${dati.armies}`, {
+                    sticky: true
+                 });
+             }
+        }
+
+        /**
+         * Gestore dell'evento click su una regione
+         */
+        function onRegioneClick(e) {
+            if (giocatoreDiTurno !== PLAYER_USER) return; // Non fare nulla se è il turno dell'IA
+
+            const layer = e.target;
+            const nomeRegioneCliccata = layer.feature.properties[NOME_PROPRIETA_REGIONE];
+            const datiRegioneCliccata = statoGioco[nomeRegioneCliccata];
+
+            // FASE DI RINFORZO
+            if (faseTurno === "RINFORZO") {
+                if (datiRegioneCliccata.owner === PLAYER_USER && armateDaPiazzare > 0) {
+                    // Piazza un'armata
+                    datiRegioneCliccata.armies++;
+                    armateDaPiazzare--;
+                    aggiornaUIInfo();
+                    aggiornaMappa();
+                    
+                    if (armateDaPiazzare === 0) {
+                        alert("Rinforzi terminati. Inizia la fase di Attacco/Spostamento.");
+                        cambiaFase("ATTACCO_SPOSTAMENTO");
+                    }
+                } else if (armateDaPiazzare > 0) {
+                    alert("Seleziona un tuo territorio per piazzare armate.");
+                }
+            }
+
+            // FASE ATTACCO/SPOSTAMENTO
+            else if (faseTurno === "ATTACCO_SPOSTAMENTO") {
+                
+                // CASO 1: Nessuna sorgente selezionata. Seleziono la SORGENTE.
+                if (regioneSorgente === null) {
+                    if (datiRegioneCliccata.owner !== PLAYER_USER) {
+                        alert("Seleziona prima un tuo territorio di partenza.");
+                        return;
+                    }
+                    if (datiRegioneCliccata.armies < 2) {
+                        alert("Devi avere almeno 2 armate per attaccare o spostare.");
+                        return;
+                    }
+                    // Selezione SORGENTE valida
+                    regioneSorgente = nomeRegioneCliccata;
+                    layer.setStyle({ color: '#FFFF00', weight: 4 }); // Evidenzia in giallo
+                    aggiornaInfoRegione(nomeRegioneCliccata, "Sorgente selezionata. Clicca su una regione confinante.");
+                    divInfoAzioni.innerHTML = `<button class="disabled" onclick="resetSelezione()">Annulla Selezione</button>`;
+                
+                // CASO 2: Sorgente già selezionata. Seleziono la DESTINAZIONE.
+                } else {
+                    const datiSorgente = statoGioco[regioneSorgente];
+                    
+                    // Deseleziona se riclicco sulla sorgente
+                    if (regioneSorgente === nomeRegioneCliccata) {
+                        resetSelezione();
+                        return;
+                    }
+
+                    // Controlla se è confinante
+                    if (!MAPPA_CONFINI[regioneSorgente] || !MAPPA_CONFINI[regioneSorgente].includes(nomeRegioneCliccata)) {
+                        alert("Regione non confinante. Seleziona un bersaglio valido.");
+                        return;
+                    }
+
+                    // È confinante. Determina l'azione.
+                    const proprietarioDest = datiRegioneCliccata.owner;
+                    
+                    if (proprietarioDest === PLAYER_USER) {
+                        // AZIONE: SPOSTAMENTO
+                        aggiornaInfoRegione(nomeRegioneCliccata, "Alleato. Puoi spostare truppe.");
+                        divInfoAzioni.innerHTML = `<button class="move" onclick="eseguiSpostamento('${regioneSorgente}', '${nomeRegioneCliccata}')">Sposta Armate</button>`;
+                    } else {
+                        // AZIONE: ATTACCO (vs Neutrale o IA)
+                        let tipoAzione = (proprietarioDest === PLAYER_NEUTRAL) ? "Invadi" : "Attacca";
+                        aggiornaInfoRegione(nomeRegioneCliccata, `Nemico. Puoi attaccare.`);
+                        divInfoAzioni.innerHTML = `<button class="attack" onclick="eseguiBattaglia('${regioneSorgente}', '${nomeRegioneCliccata}')">${tipoAzione} (vs ${datiRegioneCliccata.armies})</button>`;
+                    }
+                }
+            }
+        }
+
+        /**
+         * Resetta la selezione della regione sorgente
+         */
+        function resetSelezione() {
+            regioneSorgente = null;
+            aggiornaMappa(); // Rimuove l'evidenziazione
+            aggiornaInfoRegione(null, "Seleziona una regione.");
+            divInfoAzioni.innerHTML = "";
+        }
+        
+        /**
+         * Esegue uno spostamento di armate (logica prompt)
+         */
+        function eseguiSpostamento(sorgenteNome, destNome) {
+            const sorgente = statoGioco[sorgenteNome];
+            const dest = statoGioco[destNome];
+            const maxSpostabili = sorgente.armies - 1;
+            
+            let numDaSpostare = parseInt(prompt(`Quante armate vuoi spostare in ${destNome}? (max ${maxSpostabili})`, maxSpostabili));
+
+            if (isNaN(numDaSpostare) || numDaSpostare < 1 || numDaSpostare > maxSpostabili) {
+                alert("Numero non valido.");
+                return;
+            }
+
+            sorgente.armies -= numDaSpostare;
+            dest.armies += numDaSpostare;
+            
+            console.log(`Spostate ${numDaSpostare} armate da ${sorgenteNome} a ${destNome}`);
+            resetSelezione();
+            aggiornaMappa();
+        }
+
+        /**
+         * Esegue UN round di battaglia (lancio dadi)
+         */
+        function eseguiBattaglia(sorgenteNome, destNome) {
+            const sorgente = statoGioco[sorgenteNome];
+            const dest = statoGioco[destNome];
+            const bias = parseInt(sliderBias.value);
+
+            // 1. Determina numero dadi
+            let numDadiAtt = Math.min(3, sorgente.armies - 1);
+            let numDadiDif = Math.min(2, dest.armies);
+            
+            if (numDadiAtt < 1) {
+                alert("Non hai abbastanza armate per attaccare (serve almeno 1 armata in più del numero di dadi).");
+                return;
+            }
+
+            // 2. Lancia dadi
+            let dadiAtt = lanciaDadi(numDadiAtt).sort((a, b) => b - a);
+            let dadiDif = lanciaDadi(numDadiDif).sort((a, b) => b - a);
+
+            // 3. Applica Bias
+            if (bias > 0) dadiAtt[0] += bias;
+            if (bias < 0) dadiDif[0] += Math.abs(bias);
+
+            let logBattaglia = `ATTACCO: ${sorgenteNome} vs ${destNome}\n`;
+            logBattaglia += `Dadi Att: ${dadiAtt.join(', ')} (Bias: ${bias > 0 ? bias : 0})\n`;
+            logBattaglia += `Dadi Dif: ${dadiDif.join(', ')} (Bias: ${bias < 0 ? Math.abs(bias) : 0})\n\n`;
+
+            // 4. Confronta dadi
+            let perditeAtt = 0;
+            let perditeDif = 0;
+            let numConfronti = Math.min(numDadiAtt, numDadiDif);
+
+            for (let i = 0; i < numConfronti; i++) {
+                if (dadiAtt[i] > dadiDif[i]) {
+                    perditeDif++;
+                    logBattaglia += `Vince Att: ${dadiAtt[i]} vs ${dadiDif[i]}\n`;
+                } else {
+                    perditeAtt++;
+                    logBattaglia += `Vince Dif: ${dadiDif[i]} vs ${dadiAtt[i]}\n`;
+                }
+            }
+            
+            sorgente.armies -= perditeAtt;
+            dest.armies -= perditeDif;
+
+            logBattaglia += `\nPerdite Att: ${perditeAtt} | Perdite Dif: ${perditeDif}`;
+            alert(logBattaglia);
+            console.log(logBattaglia);
+
+            // 5. Verifica conquista
+            if (dest.armies <= 0) {
+                alert(`${destNome} conquistato!`);
+                const proprietarioPrecedente = dest.owner;
+                dest.owner = sorgente.owner;
+                
+                // Spostamento armate post-conquista
+                let minSpostare = numDadiAtt;
+                let maxSpostare = sorgente.armies - 1;
+
+                if (maxSpostare < minSpostare) minSpostare = maxSpostare; // Caso limite
+                
+                let numDaSpostare = parseInt(prompt(`Quante armate spostare nel territorio conquistato? (min ${minSpostare}, max ${maxSpostare})`, minSpostare));
+                
+                if (isNaN(numDaSpostare) || numDaSpostare < minSpostare || numDaSpostare > maxSpostare) {
+                    numDaSpostare = minSpostare; // Default
+                }
+                
+                sorgente.armies -= numDaSpostare;
+                dest.armies = numDaSpostare;
+
+                resetSelezione();
+                checkVittoria(sorgente.owner, proprietarioPrecedente);
+            }
+
+            aggiornaMappa();
+            aggiornaInfoRegione(destNome, "Aggiornamento post-battaglia.");
+            
+            // Se l'attaccante non può più attaccare
+            if (sorgente.armies < 2) {
+                resetSelezione();
+            }
+        }
+
+        function lanciaDadi(num) {
+            let dadi = [];
+            for (let i = 0; i < num; i++) {
+                dadi.push(Math.floor(Math.random() * 6) + 1);
+            }
+            return dadi;
+        }
+
+        /**
+         * Gestisce l'inizio di un nuovo turno
+         */
+        function iniziaTurno(giocatore) {
+            giocatoreDiTurno = giocatore;
+            spanGiocatoreCorrente.innerText = giocatore;
+            resetSelezione();
+
+            if (giocatore === PLAYER_USER) {
+                // Calcola rinforzi
+                armateDaPiazzare = calcolaRinforzi(PLAYER_USER);
+                cambiaFase("RINFORZO");
+            } else {
+                // È il turno dell'IA
+                cambiaFase("TURNO_IA");
+                setTimeout(eseguiTurnoAI, 1000); // Dai tempo all'utente di leggere
+            }
+            aggiornaUIInfo();
+        }
+
+        /**
+         * Calcola i rinforzi per un giocatore
+         */
+        function calcolaRinforzi(giocatore) {
+            let numTerritori = 0;
+            for (const nomeRegione in statoGioco) {
+                if (statoGioco[nomeRegione].owner === giocatore) {
+                    numTerritori++;
+                }
+            }
+            // Regola Risiko: N / 3, minimo 3
+            return Math.max(3, Math.floor(numTerritori / 3));
+        }
+
+        /**
+         * Cambia la fase del turno e aggiorna l'UI
+         */
+        function cambiaFase(nuovaFase) {
+            faseTurno = nuovaFase;
+            spanFaseCorrente.innerText = nuovaFase;
+
+            if (faseTurno === "RINFORZO") {
+                btnTerminaFase.innerText = "Termina Piazzamento (auto)";
+                btnTerminaFase.disabled = true;
+                sliderBias.disabled = true; // Non si può cambiare bias durante rinforzo
+                sliderObiettivo.disabled = true;
+            } else if (faseTurno === "ATTACCO_SPOSTAMENTO") {
+                btnTerminaFase.innerText = "Termina Turno";
+                btnTerminaFase.disabled = false;
+                sliderBias.disabled = false;
+                sliderObiettivo.disabled = true;
+            } else if (faseTurno === "TURNO_IA") {
+                btnTerminaFase.innerText = "Turno del Computer...";
+                btnTerminaFase.disabled = true;
+                sliderBias.disabled = true;
+                sliderObiettivo.disabled = true;
+            }
+        }
+
+        /**
+         * Bottone "Termina Fase / Turno"
+         */
+        function terminaFase() {
+            if (faseTurno === "ATTACCO_SPOSTAMENTO") {
+                // Finisce il turno dell'utente
+                console.log("Turno Utente Terminato.");
+                iniziaTurno(PLAYER_AI);
+            }
+        }
+
+        /**
+         * Aggiorna il box info sulla destra
+         */
+        function aggiornaUIInfo() {
+            spanArmateRinforzo.innerText = armateDaPiazzare;
+            spanGiocatoreCorrente.innerText = giocatoreDiTurno;
+            spanFaseCorrente.innerText = faseTurno;
+        }
+
+        /**
+         * Aggiorna il box #info-regione
+         */
+        function aggiornaInfoRegione(nomeRegione, statoAzione = "") {
+            if (!nomeRegione) {
+                divInfoRegione.innerHTML = "Seleziona una regione.";
+                return;
+            }
+            const dati = statoGioco[nomeRegione];
+            divInfoRegione.innerHTML = `
+                <strong>Regione:</strong> ${nomeRegione}<br>
+                <strong>Possessore:</strong> ${dati.owner}<br>
+                <strong>Armate:</strong> ${dati.armies}<br>
+                <small><em>${statoAzione}</em></small>
+            `;
+        }
+        
+        /**
+         * Controlla le condizioni di vittoria
+         */
+        function checkVittoria(vincitoreBattaglia, perdenteBattaglia) {
+            let countUser = 0;
+            let countAI = 0;
+
+            for (const nomeRegione in statoGioco) {
+                if (statoGioco[nomeRegione].owner === PLAYER_USER) countUser++;
+                else if (statoGioco[nomeRegione].owner === PLAYER_AI) countAI++;
+            }
+            
+            // 1. Vittoria per annientamento
+            if (countAI === 0) {
+                alert("VITTORIA! Hai annientato il Computer!");
+                location.reload(); // Ricarica
+            }
+            if (countUser === 0) {
+                alert("SCONFITTA! Il Computer ti ha annientato!");
+                location.reload();
+            }
+
+            // 2. Vittoria per obiettivo
+            if (countUser >= sogliaVittoria) {
+                alert(`VITTORIA! Hai conquistato ${countUser}/${totaleRegioni} territori e raggiunto l'obiettivo!`);
+                location.reload();
+            }
+            if (countAI >= sogliaVittoria) {
+                alert(`SCONFITTA! Il Computer ha conquistato ${countAI}/${totaleRegioni} territori!`);
+                location.reload();
+            }
+        }
+
+        // --- SEZIONE INTELLIGENZA ARTIFICIALE (IA) ---
+
+        /**
+         * Gestisce l'intero turno dell'IA
+         */
+        function eseguiTurnoAI() {
+            console.log("Inizio Turno IA");
+            
+            // 1. FASE RINFORZO IA
+            const rinforziIA = calcolaRinforzi(PLAYER_AI);
+            console.log(`IA riceve ${rinforziIA} rinforzi.`);
+            
+            // Strategia Rinforzo: "Blob" - Mette tutte le armate sul territorio
+            // di frontiera più minaccioso (o con più armate).
+            let regioneTargetRinforzo = null;
+            let maxArmate = -1;
+            
+            const mieiTerritori = Object.keys(statoGioco).filter(r => statoGioco[r].owner === PLAYER_AI);
+            
+            if (mieiTerritori.length === 0) {
+                 iniziaTurno(PLAYER_USER); // IA non ha territori, salta
+                 return;
+            }
+
+            // Cerca il territorio più grande
+            mieiTerritori.forEach(nomeRegione => {
+                if (statoGioco[nomeRegione].armies > maxArmate) {
+                    // Controllo bonus: è di frontiera?
+                    if (isFrontiera(nomeRegione, PLAYER_AI)) {
+                        maxArmate = statoGioco[nomeRegione].armies;
+                        regioneTargetRinforzo = nomeRegione;
+                    }
+                }
+            });
+            
+            // Se non trova una frontiera, prende il primo che capita
+            if (regioneTargetRinforzo === null) {
+                regioneTargetRinforzo = mieiTerritori[0];
+            }
+
+            console.log(`IA piazza ${rinforziIA} armate in ${regioneTargetRinforzo}`);
+            statoGioco[regioneTargetRinforzo].armies += rinforziIA;
+            aggiornaMappa();
+
+            // 2. FASE ATTACCO IA (con un piccolo delay)
+            setTimeout(() => {
+                eseguiAttacchiIA();
+            }, 1000);
+        }
+
+        /**
+         * Funzione helper per IA: controlla se una regione è di frontiera
+         */
+        function isFrontiera(nomeRegione, proprietario) {
+            const confinanti = MAPPA_CONFINI[nomeRegione] || [];
+            for (const vicino of confinanti) {
+                if (statoGioco[vicino] && statoGioco[vicino].owner !== proprietario) {
+                    return true; // Trovato un vicino nemico
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Esegue la logica di attacco dell'IA
+         */
+        function eseguiAttacchiIA() {
+            console.log("IA - Fase Attacco");
+            let attaccoPossibile = true;
+            let attacchiEseguiti = 0;
+
+            // L'IA continua ad attaccare finché può o finché non ritiene più vantaggioso
+            // (Limitiamo a 5 attacchi per evitare loop infiniti)
+            while (attaccoPossibile && attacchiEseguiti < 5) {
+                let bestAttack = trovaMigliorAttaccoIA();
+
+                if (bestAttack) {
+                    console.log(`IA attacca: ${bestAttack.from} (${bestAttack.armateAtt}) vs ${bestAttack.to} (${bestAttack.armateDif})`);
+                    
+                    const sorgente = statoGioco[bestAttack.from];
+                    const dest = statoGioco[bestAttack.to];
+                    const proprietarioPrecedente = dest.owner;
+                    
+                    // IA attacca finché non vince o non può più
+                    while (sorgente.armies > 1 && dest.armies > 0) {
+                        // IA non usa bias per semplicità (o potremmo dargli un bias fisso)
+                        let dadiAtt = lanciaDadi(Math.min(3, sorgente.armies - 1)).sort((a, b) => b - a);
+                        let dadiDif = lanciaDadi(Math.min(2, dest.armies)).sort((a, b) => b - a);
+
+                        let perditeAtt = 0;
+                        let perditeDif = 0;
+                        let numConfronti = Math.min(dadiAtt.length, dadiDif.length);
+
+                        for (let i = 0; i < numConfronti; i++) {
+                            if (dadiAtt[i] > dadiDif[i]) perditeDif++;
+                            else perditeAtt++;
+                        }
+                        
+                        sorgente.armies -= perditeAtt;
+                        dest.armies -= perditeDif;
+                    }
+
+                    // Conquista?
+                    if (dest.armies <= 0) {
+                        console.log(`IA ha conquistato ${bestAttack.to}`);
+                        dest.owner = PLAYER_AI;
+                        // Sposta le armate usate per attaccare (minimo 3 o quante ne ha)
+                        let armateDaSpostare = Math.min(sorgente.armies - 1, 3);
+                        if (armateDaSpostare < 1) armateDaSpostare = 1;
+                        
+                        if(sorgente.armies - armateDaSpostare < 1) armateDaSpostare = sorgente.armies - 1;
+
+                        sorgente.armies -= armateDaSpostare;
+                        dest.armies = armateDaSpostare;
+                        
+                        // Deve controllare la vittoria
+                        checkVittoria(PLAYER_AI, proprietarioPrecedente);
+                    } else {
+                        console.log("IA non è riuscita a conquistare.");
+                    }
+                    
+                    attacchiEseguiti++;
+                } else {
+                    attaccoPossibile = false; // Nessun attacco vantaggioso trovato
+                }
+            }
+
+            console.log("IA termina attacchi.");
+            aggiornaMappa();
+
+            // 3. FASE SPOSTAMENTO IA (Semplice: non fa spostamenti)
+            setTimeout(() => {
+                console.log("IA termina turno.");
+                iniziaTurno(PLAYER_USER);
+            }, 1500); // Delay per far vedere l'esito degli attacchi
+        }
+        
+        /**
+         * IA cerca il miglior attacco possibile
+         */
+        function trovaMigliorAttaccoIA() {
+            let migliorAttacco = null;
+            let maxVantaggio = 0.5; // Attacca solo se ha un vantaggio
+
+            const mieiTerritori = Object.keys(statoGioco).filter(r =>
+                statoGioco[r].owner === PLAYER_AI && statoGioco[r].armies > 1
+            );
+
+            for (const sorgenteNome of mieiTerritori) {
+                const sorgente = statoGioco[sorgenteNome];
+                const confinanti = MAPPA_CONFINI[sorgenteNome] || [];
+                
+                for (const destNome of confinanti) {
+                    const dest = statoGioco[destNome];
+                    if (dest && dest.owner !== PLAYER_AI) {
+                        // Calcola vantaggio (semplice rapporto armate)
+                        let vantaggio = sorgente.armies / (dest.armies + 1); // +1 per evitare divisione per zero
+                        
+                        // Prioritizza attacchi a neutrali o se ha molte più armate
+                        if (dest.owner === PLAYER_NEUTRAL) vantaggio *= 1.5;
+                        
+                        if (vantaggio > maxVantaggio) {
+                            maxVantaggio = vantaggio;
+                            migliorAttacco = {
+                                from: sorgenteNome,
+                                to: destNome,
+                                armateAtt: sorgente.armies,
+                                armateDif: dest.armies
+                            };
+                        }
+                    }
+                }
+            }
+            return migliorAttacco;
+        }
+
+    </script>
+</body>
+</html>

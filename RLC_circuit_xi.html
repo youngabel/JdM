@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulatore RLC Forzato (con Risonanza)</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+      MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        },
+        startup: {
+          ready: () => {
+            MathJax.startup.defaultReady();
+          }
+        }
+      };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script" async></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        h1, h2 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        h2 {
+            font-size: 1.1em;
+            margin-bottom: 5px;
+            min-height: 1.5em;
+        }
+        .controls {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+        .slider-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .slider-group label {
+            min-width: 250px;
+            font-weight: 500;
+        }
+        .slider-group input[type="range"] {
+            flex-grow: 1;
+            margin: 0 10px;
+        }
+        .slider-group span {
+            min-width: 40px;
+            text-align: right;
+            font-family: monospace;
+        }
+        #info {
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-top: 20px;
+            min-height: 1.5em;
+        }
+        .plot-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            max-width: 1200px;
+            margin: 20px auto;
+        }
+        .plot-container {
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+        canvas {
+            max-width: 100%;
+        }
+        /* Stili per i tipi di smorzamento */
+        .sottosmorzato { color: #2980b9; }
+        .critico { color: #e67e22; }
+        .sovrasmorzato { color: #c0392b; }
+    </style>
+</head>
+<body>
+
+    <h1>Simulatore RLC Forzato e Risonanza</h1>
+
+    <div class="controls">
+        <div class="slider-group">
+            <label for="sliderAlpha">Smorzamento $\alpha = R/(2L)$:</label>
+            <input type="range" id="sliderAlpha" min="0.01" max="2.0" step="0.01" value="0.2">
+            <span id="alpha-value">0.20</span>
+        </div>
+        <div class="slider-group">
+            <label for="sliderOmega0">Freq. Naturale $\omega_0 = 1/\sqrt{LC}$:</label>
+            <input type="range" id="sliderOmega0" min="0.1" max="5.0" step="0.01" value="1.0">
+            <span id="omega0-value">1.00</span>
+        </div>
+        
+        <div class="slider-group">
+            <label for="sliderOmegaD">Freq. Forzante $\omega_d$:</label>
+            <input type="range" id="sliderOmegaD" min="0.001" max="5.0" step="0.01" value="1.0">
+            <span id="omegaD-value">1.00</span>
+        </div>
+
+        <div id="info">
+            $\xi = \alpha / \omega_0$: <span id="xi-value">...</span>
+            (<span id="damping-type">...</span>)
+        </div>
+    </div>
+
+    <div class="plot-grid">
+        <div class="plot-container">
+            <h2>Forzante ($V_S(t)$)</h2>
+            <canvas id="chartVs"></canvas>
+        </div>
+        <div class="plot-container">
+            <h2>Tensione Capacitore ($V_C \propto q$)</h2>
+            <canvas id="chartVc"></canvas>
+        </div>
+        <div class="plot-container">
+            <h2>Tensione Resistore ($V_R \propto I$)</h2>
+            <canvas id="chartVr"></canvas>
+        </div>
+        <div class="plot-container">
+            <h2>Tensione Induttore ($V_L \propto dI/dt$)</h2>
+            <canvas id="chartVl"></canvas>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- Elementi DOM ---
+            const sliderAlpha = document.getElementById('sliderAlpha');
+            const sliderOmega0 = document.getElementById('sliderOmega0');
+            const sliderOmegaD = document.getElementById('sliderOmegaD'); // Nuovo
+            
+            const alphaValueSpan = document.getElementById('alpha-value');
+            const omega0ValueSpan = document.getElementById('omega0-value');
+            const omegaDValueSpan = document.getElementById('omegaD-value'); // Nuovo
+            
+            const xiValueSpan = document.getElementById('xi-value');
+            const dampingTypeSpan = document.getElementById('damping-type');
+
+            const ctxVs = document.getElementById('chartVs').getContext('2d');
+            const ctxVc = document.getElementById('chartVc').getContext('2d');
+            const ctxVr = document.getElementById('chartVr').getContext('2d');
+            const ctxVl = document.getElementById('chartVl').getContext('2d');
+
+            // --- Parametri di Simulazione ---
+            const simParams = {
+                // MODIFICA: Forzante ACCESA
+                F0: 5.0,
+                tMax: 50.0,
+                dt: 0.05
+            };
+
+            const charts = {};
+
+            // --- Funzione Helper per Creare Grafici ---
+            function createChart(ctx, label, borderColor) {
+                return new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: label,
+                            data: [],
+                            borderColor: borderColor,
+                            borderWidth: 2,
+                            fill: false,
+                            pointRadius: 0,
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        animation: false,
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: { display: true, text: 'Tempo (t)' },
+                                ticks: { maxTicksLimit: 10 }
+                            },
+                            y: {
+                                title: { display: false },
+                                beginAtZero: false,
+                                grace: '10%'
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false }
+                        }
+                    }
+                });
+            }
+
+            // --- Inizializzazione Grafici ---
+            charts.vs = createChart(ctxVs, 'Forzante V_S', '#3498db');
+            charts.vc = createChart(ctxVc, 'V_C', '#2ecc71');
+            charts.vr = createChart(ctxVr, 'V_R', '#e74c3c');
+            charts.vl = createChart(ctxVl, 'V_L', '#9b59b6');
+
+            // --- Solutore ODE (Runge-Kutta 4) ---
+            // Risolviamo: d²q/dt² + 2α(dq/dt) + ω₀²q = F(t)
+            
+            // MODIFICA: getDerivatives ora accetta anche omega_d
+            function getDerivatives(t, y1, y2, alpha, omega0, omega_d) {
+                // F_t ora usa omega_d
+                const F_t = simParams.F0 * Math.sin(omega_d * t);
+                const dy1_dt = y2;
+                const dy2_dt = F_t - (2 * alpha * y2) - (omega0**2 * y1);
+                return { dy1_dt, dy2_dt, F_t }; // Ritorniamo F_t per plottarlo
+            }
+
+            // MODIFICA: solveODE ora accetta anche omega_d
+            function solveODE(alpha, omega0, omega_d) {
+                let t = 0;
+                // MODIFICA: Torniamo a condizioni iniziali nulle (partiamo da fermo)
+                let y1 = 0; // q(0) = 0
+                let y2 = 0; // I(0) = 0
+
+                const time = [];
+                const vs_data = [];
+                const vc_data = [];
+                const vr_data = [];
+                const vl_data = [];
+
+                const dt = simParams.dt;
+                const tMax = simParams.tMax;
+
+                while (t <= tMax) {
+                    
+                    // Calcoliamo le derivate per i plot (e per k1)
+                    // MODIFICA: Passiamo omega_d
+                    const k1 = getDerivatives(t, y1, y2, alpha, omega0, omega_d);
+                    
+                    // Salviamo i dati
+                    time.push(t);
+                    vs_data.push(k1.F_t); // F(t)
+                    vc_data.push(y1);     // q
+                    vr_data.push(y2);     // I
+                    vl_data.push(k1.dy2_dt); // dI/dt
+
+                    // --- Step RK4 ---
+                    // MODIFICA: Passiamo omega_d a tutte le chiamate
+                    const k2 = getDerivatives(t + 0.5*dt, y1 + 0.5*dt*k1.dy1_dt, y2 + 0.5*dt*k1.dy2_dt, alpha, omega0, omega_d);
+                    const k3 = getDerivatives(t + 0.5*dt, y1 + 0.5*dt*k2.dy1_dt, y2 + 0.5*dt*k2.dy2_dt, alpha, omega0, omega_d);
+                    const k4 = getDerivatives(t + dt, y1 + dt*k3.dy1_dt, y2 + dt*k3.dy2_dt, alpha, omega0, omega_d);
+
+                    // Aggiorna y1 (q) e y2 (I)
+                    y1 += (dt / 6) * (k1.dy1_dt + 2*k2.dy1_dt + 2*k3.dy1_dt + k4.dy1_dt);
+                    y2 += (dt / 6) * (k1.dy2_dt + 2*k2.dy2_dt + 2*k3.dy2_dt + k4.dy2_dt);
+                    
+                    t += dt;
+                }
+                
+                return { time, vs_data, vc_data, vr_data, vl_data };
+            }
+
+            // --- Funzione di Aggiornamento Principale ---
+            function updateSimulation() {
+                // 1. Leggi i valori
+                const alpha = parseFloat(sliderAlpha.value);
+                const omega0 = parseFloat(sliderOmega0.value);
+                const omega_d = parseFloat(sliderOmegaD.value); // Nuovo
+                
+                // 2. Calcola e mostra valori derivati
+                const xi = alpha / omega0;
+                alphaValueSpan.textContent = alpha.toFixed(2);
+                omega0ValueSpan.textContent = omega0.toFixed(2);
+                omegaDValueSpan.textContent = omega_d.toFixed(2); // Nuovo
+                xiValueSpan.textContent = xi.toFixed(3);
+
+                // Il tipo di smorzamento è ancora rilevante
+                let dampingType = "";
+                let dampingClass = "";
+                if (Math.abs(xi - 1.0) < 0.02) {
+                    dampingType = "Criticamente Smorzato";
+                    dampingClass = "critico";
+                } else if (xi < 1.0) {
+                    dampingType = "Sottosmorzato";
+                    dampingClass = "sottosmorzato";
+                } else {
+                    dampingType = "Sovrasmorzato";
+                    dampingClass = "sovrasmorzato";
+                }
+                dampingTypeSpan.textContent = dampingType;
+                dampingTypeSpan.className = dampingClass;
+
+                // 3. Risolvi l'ODE (passando anche omega_d)
+                const data = solveODE(alpha, omega0, omega_d);
+
+                // 4. Aggiorna i grafici
+                charts.vs.data.labels = data.time;
+                charts.vs.data.datasets[0].data = data.vs_data;
+                
+                charts.vc.data.labels = data.time;
+                charts.vc.data.datasets[0].data = data.vc_data;
+
+                charts.vr.data.labels = data.time;
+                charts.vr.data.datasets[0].data = data.vr_data;
+
+                charts.vl.data.labels = data.time;
+                charts.vl.data.datasets[0].data = data.vl_data;
+
+                charts.vs.update();
+                charts.vc.update();
+                charts.vr.update();
+                charts.vl.update();
+            }
+
+            // --- Event Listeners ---
+            sliderAlpha.addEventListener('input', updateSimulation);
+            sliderOmega0.addEventListener('input', updateSimulation);
+            sliderOmegaD.addEventListener('input', updateSimulation); // Nuovo
+
+            // --- Esegui la prima simulazione ---
+            updateSimulation();
+        });
+    </script>
+</body>
+</html>

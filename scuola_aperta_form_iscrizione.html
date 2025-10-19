@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spaceship Hub Interface</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <style>
+        /* --- CONFIGURAZIONE BASE E STILE NEONGLOW --- */
+        
+        :root {
+            --neon-color: #00ffff;
+            --bg-color: #050a14;
+            --text-color: #e0faff;
+            --box-bg-color: rgba(0, 20, 30, 0.75);
+            --glow-intensity-text: 10px;
+            --glow-intensity-box: 15px;
+            --danger-color: #ff4d4d; /* Colore rosso neon per errore */
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            padding: 15px;
+            overflow: hidden; /* Blocca lo scroll del body */
+            text-shadow: 0 0 3px var(--neon-color);
+        }
+
+        .hub-box {
+            background: var(--box-bg-color);
+            border: 2px solid var(--neon-color);
+            padding: 20px;
+            border-radius: 5px;
+            backdrop-filter: blur(5px);
+        }
+
+        .neonglow-border {
+            box-shadow: 0 0 5px var(--neon-color),
+                        0 0 var(--glow-intensity-box) var(--neon-color),
+                        inset 0 0 5px var(--neon-color);
+            animation: glow-loop 2.5s infinite alternate;
+        }
+
+        @keyframes glow-loop {
+            from {
+                box-shadow: 0 0 5px var(--neon-color),
+                            0 0 var(--glow-intensity-box) var(--neon-color),
+                            inset 0 0 5px var(--neon-color);
+                border-color: var(--neon-color);
+            }
+            to {
+                box-shadow: 0 0 10px #fff,
+                            0 0 25px var(--neon-color),
+                            inset 0 0 10px #fff;
+                border-color: #fff;
+            }
+        }
+
+        h1, h2, h3 {
+            color: var(--neon-color);
+            text-shadow: 0 0 var(--glow-intensity-text) var(--neon-color);
+            margin-bottom: 15px;
+            font-weight: 400;
+        }
+
+        /* --- LAYOUT GRIGLIA DELL'HUB --- */
+
+        .hub-container {
+            display: grid;
+            grid-template-columns: 2fr 3fr 2fr;
+            grid-template-rows: auto 1fr auto; /* Riga centrale flessibile */
+            grid-template-areas:
+                "header header header"
+                "terminal1 main terminal2"
+                "sensors sensors realtime";
+            gap: 15px;
+            height: calc(100vh - 30px); /* Altezza fissa per l'hub */
+        }
+
+        #info-box { grid-area: header; }
+        #terminal-1 { grid-area: terminal1; }
+        #form-box { grid-area: main; }
+        #terminal-2 { grid-area: terminal2; }
+        #sensor-box { grid-area: sensors; }
+        #realtime-box { grid-area: realtime; }
+
+        /* --- STILE ELEMENTI SPECIFICI --- */
+
+        #info-box {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+        }
+        #info-box h1 { margin-bottom: 0; font-size: 1.5em;}
+        #info-box p { font-size: 1em; }
+
+        #realtime-box {
+            text-align: right;
+        }
+        #clock {
+            font-size: 2.5em;
+            font-weight: 700;
+            color: #fff;
+            text-shadow: 0 0 15px #fff;
+        }
+        #date, #gps {
+            font-size: 1.1em;
+        }
+
+        /* Terminali */
+        .terminal {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9em;
+            overflow-y: auto; /* Scroll interno se il contenuto è troppo */
+            white-space: pre-wrap;
+        }
+        .terminal h3 {
+            border-bottom: 1px solid var(--neon-color);
+            padding-bottom: 5px;
+        }
+        
+        .terminal-content {
+            padding-top: 10px;
+        }
+
+        .terminal-line {
+            margin-bottom: 5px;
+        }
+        .terminal-line::before {
+            content: '> ';
+            color: var(--neon-color);
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 9px;
+            height: 1.1em;
+            background-color: var(--neon-color);
+            box-shadow: 0 0 5px var(--neon-color);
+            animation: blink 1s infinite step-end;
+            vertical-align: bottom;
+            margin-left: 2px;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+
+        /* Form Centrale */
+        /* MODIFICA: Aggiunto overflow-y per fixare il layout */
+        #form-box {
+            overflow-y: auto; /* Aggiunge scrollbar interna se il form è troppo lungo */
+        }
+
+        #hub-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .form-group-full {
+            grid-column: 1 / -1;
+        }
+
+        .form-group label {
+            margin-bottom: 5px;
+            font-size: 0.9em;
+            color: var(--neon-color);
+        }
+        
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        select,
+        textarea {
+            background: rgba(0, 50, 70, 0.5);
+            border: 1px solid var(--neon-color);
+            color: var(--text-color);
+            padding: 10px;
+            font-family: 'Roboto', sans-serif;
+            border-radius: 3px;
+            font-size: 1em;
+            box-shadow: inset 0 0 5px rgba(0, 255, 255, 0.3);
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        
+        textarea {
+            resize: vertical;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #fff;
+            box-shadow: 0 0 10px var(--neon-color), inset 0 0 8px rgba(0, 255, 255, 0.5);
+        }
+
+        /* MODIFICA: Stile per campi obbligatori non validi */
+        input:required:invalid,
+        select:required:invalid {
+            border-color: var(--danger-color);
+            box-shadow: 0 0 8px var(--danger-color), inset 0 0 5px rgba(255, 0, 0, 0.3);
+            background: rgba(50, 0, 10, 0.5);
+        }
+        
+        input:required:invalid:focus,
+        select:required:invalid:focus {
+            box-shadow: 0 0 10px var(--danger-color), inset 0 0 8px rgba(255, 0, 0, 0.5);
+        }
+
+        .neon-button {
+            grid-column: 1 / -1;
+            background: transparent;
+            border: 2px solid var(--neon-color);
+            color: var(--neon-color);
+            padding: 12px;
+            font-size: 1.2em;
+            font-weight: 700;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 0 5px var(--neon-color), 0 0 10px var(--neon-color);
+            transition: all 0.2s ease;
+        }
+
+        .neon-button:hover {
+            background: var(--neon-color);
+            color: var(--bg-color);
+            text-shadow: none;
+            box-shadow: 0 0 10px var(--neon-color), 0 0 20px var(--neon-color), 0 0 30px #fff;
+        }
+
+        .neon-button:active {
+            transform: scale(0.98);
+            box-shadow: 0 0 5px var(--neon-color), inset 0 0 15px var(--neon-color);
+        }
+
+        /* Sensori Audio */
+        #sensor-box h3 { margin-bottom: 10px; }
+        #audio-visualizer {
+            display: flex;
+            height: 100px;
+            align-items: flex-end;
+            gap: 4px;
+        }
+        .vu-bar {
+            flex-grow: 1;
+            background-color: var(--neon-color);
+            box-shadow: 0 0 5px var(--neon-color);
+            width: 5px;
+            height: 0%;
+            transition: height 0.05s linear;
+        }
+
+        /* Overlay messaggio full-screen */
+        #fullscreen-message {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 20, 30, 0.85);
+            backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+            pointer-events: none;
+        }
+        #fullscreen-message.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #fullscreen-message h1 {
+            font-size: 4em;
+            text-align: center;
+            text-shadow: 0 0 10px var(--neon-color), 0 0 30px var(--neon-color), 0 0 50px #fff;
+        }
+        
+        .hidden {
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="hub-container">
+
+        <header id="info-box" class="hub-box neonglow-border">
+            <div>
+                <h1>ISTITUTO: [Nome Istituto]</h1>
+            </div>
+            <div>
+                <p><strong>DOCENTE:</strong> [Nome Docente]</p>
+                <p><strong>MATERIA:</strong> [Nome Materia]</p>
+            </div>
+        </header>
+
+        <aside id="terminal-1" class="hub-box neonglow-border terminal">
+            <h3>LOG DI SISTEMA</h3>
+            <div id="terminal-1-content" class="terminal-content">
+                </div>
+        </aside>
+
+        <main id="form-box" class="hub-box neonglow-border">
+            <h2>REGISTRAZIONE NUOVO MEMBRO EQUIPAGGIO</h2>
+            <form id="hub-form" novalidate>
+                <div class="form-group">
+                    <label for="nome">Nome</label>
+                    <input type="text" id="nome" name="nome" required>
+                </div>
+                <div class="form-group">
+                    <label for="cognome">Cognome</label>
+                    <input type="text" id="cognome" name="cognome" required>
+                </div>
+                <div class="form-group">
+                    <label for="comune">Comune di Provenienza</label>
+                    <input type="text" id="comune" name="comune">
+                </div>
+                <div class="form-group">
+                    <label for="scuola">Scuola di Provenienza</label>
+                    <input type="text" id="scuola" name="scuola">
+                </div>
+                <div class="form-group">
+                    <label for="indirizzo">Indirizzo Scelto</label>
+                    <select id="indirizzo" name="indirizzo" required>
+                        <option value="">-- Seleziona --</option>
+                        <option value="Ingegneria Navale">Ingegneria Navale</option>
+                        <option value="Telecomunicazioni Spaziali">Telecomunicazioni Spaziali</option>
+                        <option value="Biologia Astrale">Biologia Astrale</option>
+                        <option value="Pilotaggio Caccia">Pilotaggio Caccia</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email">
+                </div>
+                <div class="form-group">
+                    <label for="telefono">Telefono</label>
+                    <input type="tel" id="telefono" name="telefono">
+                </div>
+                
+                <div class="form-group form-group-full">
+                    <label for="commenti">Commenti / Note dello Studente</label>
+                    <textarea id="commenti" name="commenti" rows="4"></textarea>
+                </div>
+                
+                <button type="submit" class="neon-button">Inserisci Dati</button>
+            </form>
+        </main>
+
+        <aside id="terminal-2" class="hub-box neonglow-border terminal">
+            <h3>COMUNICAZIONI IN INGRESSO</h3>
+             <div id="terminal-2-content" class="terminal-content">
+                </div>
+        </aside>
+
+        <footer id="sensor-box" class="hub-box neonglow-border">
+            <h3>SENSORI AUDIO AMBIENTE (MICROFONO)</h3>
+            <div id="audio-visualizer">
+                </div>
+        </footer>
+
+        <aside id="realtime-box" class="hub-box neonglow-border">
+            <div id="clock">00:00:00</div>
+            <div id="date">01 Gennaio 2099</div>
+            <div id="gps">GPS: --.--° N, --.--° E (Località: Ricerca...)</div>
+        </aside>
+
+    </div>
+
+    <div id="fullscreen-message" class="">
+        <h1>DATI ACQUISITI<br>REGISTRAZIONE COMPLETATA</h1>
+    </div>
+
+
+    <script>
+        // Gestione caricamento modulo jsPDF
+        const { jsPDF } = window.jspdf;
+
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- 1. OROLOGIO E DATA ---
+            const clockEl = document.getElementById('clock');
+            const dateEl = document.getElementById('date');
+
+            function updateTime() {
+                const now = new Date();
+                const h = String(now.getHours()).padStart(2, '0');
+                const m = String(now.getMinutes()).padStart(2, '0');
+                const s = String(now.getSeconds()).padStart(2, '0');
+                clockEl.textContent = `${h}:${m}:${s}`;
+                const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+                dateEl.textContent = now.toLocaleDateString('it-IT', options);
+            }
+            setInterval(updateTime, 1000);
+            updateTime();
+
+            // --- 2. GEOLOCALIZZAZIONE (GPS) ---
+            const gpsEl = document.getElementById('gps');
+
+            function initGPS() {
+                if ('geolocation' in navigator) {
+                    navigator.geolocation.watchPosition(
+                        (position) => {
+                            const lat = position.coords.latitude.toFixed(4);
+                            const lon = position.coords.longitude.toFixed(4);
+                            gpsEl.textContent = `GPS: ${lat}° N, ${lon}° E (Località: Connessa)`;
+                        },
+                        (error) => {
+                            gpsEl.textContent = `GPS: Errore (${error.message})`;
+                        },
+                        { enableHighAccuracy: true }
+                    );
+                } else {
+                    gpsEl.textContent = 'GPS: Non supportato';
+                }
+            }
+            initGPS();
+
+            // --- 3. SENSORI AUDIO (MICROFONO) ---
+            const visualizerEl = document.getElementById('audio-visualizer');
+            const numBars = 40;
+
+            for (let i = 0; i < numBars; i++) {
+                const bar = document.createElement('div');
+                bar.classList.add('vu-bar');
+                visualizerEl.appendChild(bar);
+            }
+            const vuBars = document.querySelectorAll('.vu-bar');
+
+            let audioContext;
+            let analyser;
+            let dataArray;
+
+            async function initAudio() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const source = audioContext.createMediaStreamSource(stream);
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 128;
+                    const bufferLength = analyser.frequencyBinCount;
+                    dataArray = new Uint8Array(bufferLength);
+                    source.connect(analyser);
+                    drawVisualizer();
+                } catch (err) {
+                    console.error('Errore accesso microfono:', err);
+                    document.getElementById('sensor-box').innerHTML += '<p style="color: red;">Accesso microfono negato o non disponibile.</p>';
+                }
+            }
+            
+            function drawVisualizer() {
+                requestAnimationFrame(drawVisualizer);
+                if (!analyser) return;
+                
+                analyser.getByteFrequencyData(dataArray);
+                const barStep = Math.floor(dataArray.length / numBars);
+                for (let i = 0; i < numBars; i++) {
+                    let sum = 0;
+                    for(let j = 0; j < barStep; j++) {
+                        sum += dataArray[i * barStep + j];
+                    }
+                    const average = sum / barStep;
+                    const heightPercent = (average / 255) * 100;
+                    if (vuBars[i]) {
+                        vuBars[i].style.height = `${heightPercent}%`;
+                    }
+                }
+            }
+            initAudio();
+
+            // --- 4. GESTIONE FORM E PDF ---
+            const form = document.getElementById('hub-form');
+            const overlay = document.getElementById('fullscreen-message');
+
+            form.addEventListener('submit', (e) => {
+                e.preventDefault(); // Impedisce l'invio
+                
+                // --- MODIFICA: Validazione campi obbligatori ---
+                // Usiamo checkValidity() che sfrutta gli attributi 'required'
+                if (!form.checkValidity()) {
+                    // I CSS :invalid si attivano in automatico.
+                    // Mostriamo solo un alert.
+                    alert('ERRORE: Compilare i campi obbligatori evidenziati in rosso (Nome, Cognome, Indirizzo Scelto).');
+                    return; // Interrompe l'esecuzione se il form non è valido
+                }
+                
+                // Se siamo qui, il form è valido e si può procedere.
+                
+                try {
+                    const doc = new jsPDF();
+                    const formData = new FormData(form);
+                    const timestamp = new Date().toLocaleString('it-IT');
+                    let y = 20;
+                    
+                    doc.setFont('Roboto', 'bold');
+                    doc.setFontSize(18);
+                    doc.text('Registrazione Equipaggio - Spaceship Hub', 10, y);
+                    
+                    y += 10;
+                    doc.setFont('Roboto', 'normal');
+                    doc.setFontSize(12);
+                    doc.text(`Timestamp: ${timestamp}`, 10, y);
+                    y += 10;
+                    
+                    formData.forEach((value, key) => {
+                        if (value) {
+                            const label = key.charAt(0).toUpperCase() + key.slice(1);
+                            
+                            if (key === 'commenti') {
+                                doc.text(`${label}:`, 10, y);
+                                y += 8;
+                                const maxWidth = doc.internal.pageSize.getWidth() - 20;
+                                const lines = doc.splitTextToSize(value, maxWidth);
+                                doc.text(lines, 10, y);
+                                y += (lines.length * 7);
+                            } else {
+                                doc.text(`${label}: ${value}`, 10, y);
+                                y += 8;
+                            }
+                        }
+                    });
+
+                    // Creazione nome file personalizzato
+                    const now = new Date();
+                    const h = String(now.getHours()).padStart(2, '0');
+                    const m = String(now.getMinutes()).padStart(2, '0');
+                    const s = String(now.getSeconds()).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const year = now.getFullYear();
+                    
+                    const oredata = `${h}${m}${s}-${day}${month}${year}`;
+                    
+                    const nome = formData.get('nome') || 'Nome';
+                    const cognome = formData.get('cognome') || 'Cognome';
+                    const indirizzo = formData.get('indirizzo') || 'NessunIndirizzo';
+                    
+                    const cleanIndirizzo = indirizzo.replace(/[\s\W]/g, '');
+                    
+                    // --- CORREZIONE BUG: Rimosso il '_' errato ---
+                    const cleanCognome = cognome.replace(/[\s\W]/g, '').toUpperCase();
+                    const cleanNome = nome.replace(/[\s\W]/g, '');
+
+                    const filename = `${oredata}_${cleanIndirizzo}_${cleanCognome}_${cleanNome}.pdf`;
+
+                    doc.save(filename);
+                    
+                    showSuccessMessage();
+                    form.reset();
+
+                } catch (err) {
+                    console.error('Errore durante la creazione del PDF:', err);
+                    alert('Errore durante la creazione del PDF. Controlla la console.');
+                }
+            });
+
+            function showSuccessMessage() {
+                overlay.classList.add('visible');
+                setTimeout(() => {
+                    overlay.classList.remove('visible');
+                }, 5000);
+            }
+
+            // --- 5. TERMINAL TYPER (Invariato) ---
+            const terminal1Lines = [
+                "Inizializzazione protocolli di navigazione... OK",
+                "Controllo integrità scafo... 100%",
+                "Allineamento sensori esterni... COMPLETATO",
+                "Avvio interfaccia audio (WebAudio)... ATTIVO",
+                "Sistema geolocalizzazione (GPS)... SEGNALE ACQUISITO",
+                "Sistema pronto.",
+                "In attesa di comandi..."
+            ];
+            const terminal2Lines = [
+                "MSG: Controllo Traffico -> Autorizzati all'attracco baia 7.",
+                "ALERT: Rilevata anomalia energetica settore 4G.",
+                "MSG: Capo Ingegnere -> Richiesto report diagnostica motori.",
+                "SCAN: Rilevato detrito non identificato in rotta di avvicinamento.",
+                "...standby per nuovi messaggi..."
+            ];
+
+            class TerminalTyper {
+                constructor(element, lines, options = {}) {
+                    this.element = element;
+                    this.lines = lines;
+                    this.typingSpeed = options.typingSpeed || 40;
+                    this.lineDelay = options.lineDelay || 1000;
+                    this.loopDelay = options.loopDelay || 5000;
+                    
+                    this.cursor = document.createElement('span');
+                    this.cursor.className = 'cursor';
+                    this.element.appendChild(this.cursor);
+                    
+                    this.lineIndex = 0;
+                    this.start();
+                }
+                
+                start() {
+                    this.lineIndex = 0;
+                    this.element.innerHTML = '';
+                    this.element.appendChild(this.cursor);
+                    this.typeLine();
+                }
+
+                typeLine() {
+                    if (this.lineIndex >= this.lines.length) {
+                        setTimeout(() => this.start(), this.loopDelay);
+                        return;
+                    }
+                    
+                    this.currentLineElement = document.createElement('span');
+                    this.currentLineElement.className = 'terminal-line';
+                    this.element.insertBefore(this.currentLineElement, this.cursor);
+                    
+                    this.charIndex = 0;
+                    this.typeChar();
+                }
+
+                typeChar() {
+                    const line = this.lines[this.lineIndex];
+                    
+                    if (this.charIndex < line.length) {
+                        this.currentLineElement.textContent += line[this.charIndex];
+                        this.charIndex++;
+                        setTimeout(() => this.typeChar(), this.typingSpeed);
+                    } else {
+                        this.element.insertBefore(document.createElement('br'), this.cursor);
+                        this.lineIndex++;
+                        setTimeout(() => this.typeLine(), this.lineDelay);
+                    }
+                }
+            }
+
+            const term1Content = document.getElementById('terminal-1-content');
+            const term2Content = document.getElementById('terminal-2-content');
+            
+            new TerminalTyper(term1Content, terminal1Lines);
+            new TerminalTyper(term2Content, terminal2Lines, { typingSpeed: 50, lineDelay: 1500 });
+
+        });
+    </script>
+</body>
+</html>

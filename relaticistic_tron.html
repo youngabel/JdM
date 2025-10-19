@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulatore Relativistico POV</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: monospace; background-color: #000; color: #fff; }
+        #ui-container { position: absolute; top: 10px; left: 10px; z-index: 100; display: flex; flex-direction: column; gap: 10px; }
+        .ui-box { background: rgba(0,0,0,0.6); border-radius: 5px; padding: 10px; border: 1px solid #0f0; }
+        #plot-container { position: absolute; bottom: 10px; right: 10px; width: 250px; height: 150px; }
+        canvas#plot { width: 100%; height: 100%; }
+        label { display: block; margin-bottom: 5px; color: #0f0; }
+        input[type=range] { width: 150px; }
+    </style>
+</head>
+<body>
+
+    <div id="ui-container">
+        <div class="ui-box" id="info">
+            <b>Controlli:</b><br>
+            Frecce Direzionali: Muoviti<br>
+            Barra Spaziatrice: Accelera<br>
+            Velocità: <span id="speed-value">0.00</span> c
+        </div>
+        <div class="ui-box" id="slider-container">
+            <label for="colorSlider">Colore Griglia</label>
+            <input type="range" min="0" max="1" value="0.3" step="0.01" id="colorSlider">
+        </div>
+    </div>
+
+    <div class="ui-box" id="plot-container">
+        <canvas id="plot"></canvas>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // 1. IMPOSTAZIONI DI BASE
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 2. IL "GIOCATORE" E LA TELECAMERA POV
+        const playerHeight = 1.8; // Altezza fissa della telecamera
+        const player = new THREE.Object3D();
+        player.position.y = playerHeight;
+        scene.add(player);
+
+        // La camera è il nostro punto di vista
+        camera.position.copy(player.position);
+
+        // 3. CONTROLLI DI MOVIMENTO
+        const keys = {};
+        const velocity = new THREE.Vector3();
+        const C = 1; // Velocità della luce normalizzata
+        const maxSpeed = 0.995 * C;
+        const acceleration = 0.005;
+        const boostMultiplier = 4;
+        const friction = 0.99;
+
+        window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        // 4. LA GRIGLIA CARTESIANA SUL PIANO XZ
+        const gridMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                color: { value: new THREE.Color(0x00ff00) },
+                gamma: { value: 1.0 },
+                betaVec: { value: new THREE.Vector2(0, 0) } // Vettore velocità della griglia (relativo a noi)
+            },
+            vertexShader: `
+                uniform float gamma;
+                uniform vec2 betaVec; // Direzione di moto della griglia
+                varying vec3 vPosition;
+
+                void main() {
+                    vPosition = position;
+                    vec3 transformedPosition = position;
+                    
+                    if (length(betaVec) > 0.0) {
+                        vec2 pos2D = vec2(position.x, position.z);
+                        // Proiezione della posizione sulla direzione del moto
+                        float proj_scalar = dot(pos2D, betaVec);
+                        vec2 proj_vec = proj_scalar * betaVec;
+                        
+                        // Componente perpendicolare (non si contrae)
+                        vec2 perp_vec = pos2D - proj_vec;
+
+                        // Applica la contrazione solo alla componente parallela
+                        vec2 contracted_pos = perp_vec + (proj_vec / gamma);
+                        transformedPosition.x = contracted_pos.x;
+                        transformedPosition.z = contracted_pos.y;
+                    }
+                    
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(transformedPosition, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform vec3 color;
+                varying vec3 vPosition;
+
+                void main() {
+                    float gridSize = 1.0;
+                    vec2 coord = vPosition.xz / gridSize;
+                    // Calcola la distanza dalla linea più vicina per X e per Z
+                    vec2 grid = abs(fract(coord - 0.5) - 0.5) / fwidth(coord);
+                    // Prende la più piccola delle due distanze (disegna entrambe le serie di linee)
+                    float line = min(grid.x, grid.y);
+                    //float line = grid.x;
+                    // Crea l'effetto glow
+                    float glow = 1.0 - min(line, 1.0);
+                    gl_FragColor = vec4(color * glow, glow * 0.7);
+                }
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        });
+
+        const gridGeometry = new THREE.PlaneGeometry(3000, 3000, 1, 1);
+        const gridMesh = new THREE.Mesh(gridGeometry, gridMaterial);
+        gridMesh.rotation.x = -Math.PI / 2; // Stende il piano in orizzontale
+        scene.add(gridMesh);
+
+        // 5. INTERFACCIA UTENTE (UI)
+        const speedElement = document.getElementById('speed-value');
+        const colorSlider = document.getElementById('colorSlider');
+        const plotCanvas = document.getElementById('plot');
+        const plotCtx = plotCanvas.getContext('2d');
+
+        function updateColor() {
+            const t = parseFloat(colorSlider.value);
+            // Mappatura colore: t entra in modo diverso nei canali R, G, B
+            const r = 0.5 + 0.5 * Math.sin(t * 2 * Math.PI);
+            const g = 0.5 + 0.5 * Math.sin(t * 2 * Math.PI + Math.PI / 2);
+            const b = 0.5 + 0.5 * Math.sin(t * 2 * Math.PI + Math.PI);
+            gridMaterial.uniforms.color.value.setRGB(r, g, b);
+        }
+        colorSlider.addEventListener('input', updateColor);
+        updateColor(); // Imposta colore iniziale
+
+        function drawPlot(beta, gamma) {
+            const w = plotCanvas.width;
+            const h = plotCanvas.height;
+            plotCtx.clearRect(0, 0, w, h);
+            plotCtx.strokeStyle = '#0f0';
+            plotCtx.fillStyle = '#0f0';
+            plotCtx.font = '12px monospace';
+
+            // Testi e valori
+            plotCtx.fillText(`β (v/c) = ${beta.toFixed(3)}`, 10, 15);
+            plotCtx.fillText(`γ Factor = ${gamma.toFixed(3)}`, 10, 30);
+            
+            // Barre
+            const barWidth = 40;
+            const barSpacing = 20;
+            const plotHeight = h - 40;
+            const betaHeight = plotHeight * beta;
+            // Limita l'altezza della barra di gamma per leggibilità
+            const gammaMaxDisplay = 15;
+            const gammaHeight = plotHeight * Math.min(gamma, gammaMaxDisplay) / gammaMaxDisplay;
+            
+            // Barra Beta
+            plotCtx.fillStyle = 'rgba(0, 255, 0, 0.7)';
+            plotCtx.fillRect((w/2) - barWidth - (barSpacing/2), h - betaHeight, barWidth, betaHeight);
+            plotCtx.fillText('β', (w/2) - barWidth/2 - (barSpacing/2) - 4, h - betaHeight - 5);
+            
+            // Barra Gamma
+            plotCtx.fillStyle = 'rgba(0, 255, 255, 0.7)';
+            plotCtx.fillRect((w/2) + (barSpacing/2), h - gammaHeight, barWidth, gammaHeight);
+            plotCtx.fillText('γ', (w/2) + barWidth/2 + (barSpacing/2) - 4, h - gammaHeight - 5);
+        }
+
+        // 6. CICLO DI ANIMAZIONE PRINCIPALE
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Calcola l'accelerazione basata sui tasti premuti
+            const currentAccel = acceleration * (keys['Space'] ? boostMultiplier : 1);
+            if (keys['ArrowUp'] || keys['KeyW']) velocity.z -= currentAccel;
+            if (keys['ArrowDown'] || keys['KeyS']) velocity.z += currentAccel;
+            if (keys['ArrowLeft'] || keys['KeyA']) velocity.x -= currentAccel;
+            if (keys['ArrowRight'] || keys['KeyD']) velocity.x += currentAccel;
+            
+            // Applica la frizione per rallentare
+            velocity.multiplyScalar(friction);
+
+            // Limita la velocità massima
+            if (velocity.length() > maxSpeed) {
+                velocity.normalize().multiplyScalar(maxSpeed);
+            }
+
+            // Aggiorna la posizione del giocatore
+            player.position.add(velocity);
+            
+            // La telecamera segue il giocatore
+            camera.position.copy(player.position);
+            // La telecamera guarda sempre "in avanti" lungo l'asse Z
+            camera.lookAt(player.position.x, player.position.y, player.position.z - 1);
+
+
+            // Calcola i parametri relativistici
+            const speed = velocity.length();
+            const beta = speed / C;
+            // Previene errori di calcolo se beta >= 1
+            const gamma = beta < 1.0 ? 1 / Math.sqrt(1 - beta * beta) : Infinity;
+
+            // Aggiorna la UI
+            speedElement.textContent = beta.toFixed(2);
+            drawPlot(beta, gamma);
+            
+            // Aggiorna lo shader della griglia
+            gridMaterial.uniforms.gamma.value = gamma;
+            if (speed > 0.001) {
+                // La griglia si muove VERSO di noi, quindi il suo vettore velocità è l'opposto del nostro
+                gridMaterial.uniforms.betaVec.value.set(-velocity.x / speed, -velocity.z / speed);
+            } else {
+                 gridMaterial.uniforms.betaVec.value.set(0, 0);
+            }
+
+            // Renderizza la scena
+            renderer.render(scene, camera);
+        }
+
+        // Gestione del ridimensionamento della finestra
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Avvia l'animazione
+        animate();
+    </script>
+</body>
+</html>

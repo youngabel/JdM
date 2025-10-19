@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TG JDM - Live Broadcast</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-blue: #003366;
+            --secondary-blue: #0055a4;
+            --accent-red: #d90429;
+            --text-light: #ffffff;
+            --text-dark: #cccccc;
+            --bg-transparent: rgba(0, 51, 102, 0.85);
+            --border-color-light: rgba(255, 255, 255, 0.4);
+            --border-color-dark: #30363d;
+            --bg-bloomberg: #0d1117;
+            --box-bg-bloomberg: #161b22;
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+            background-color: var(--bg-bloomberg);
+            color: var(--text-light); overflow: hidden;
+        }
+
+        #main-container { width: 100vw; height: 100vh; position: relative; }
+
+        /* --- 1. MODALITÀ CONDUZIONE TG (Default) --- */
+        #newscast-view { width: 100%; height: 100%; position: relative; }
+        #video-background { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+        .hud {
+            position: absolute; z-index: 10; background-color: var(--bg-transparent);
+            border: 1px solid var(--border-color-light); box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            transition: all 0.5s ease-in-out; border-radius: 8px;
+        }
+
+        #top-bar { top: 20px; left: 20px; right: 20px; height: 50px; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; }
+        #clock-container { top: 85px; right: 20px; padding: 8px 15px; text-align: right; }
+        #journalist-container { bottom: 100px; left: 20px; padding: 8px 15px; }
+
+        .info-box { display: flex; align-items: center; gap: 20px; font-size: 1.1em; }
+        #weather-icon { font-size: 2em; margin-right: -10px; }
+        
+        #bottom-bar {
+            position: absolute; bottom: 0; left: 0; right: 0; height: 80px;
+            background: linear-gradient(to right, var(--primary-blue), var(--secondary-blue));
+            display: flex; align-items: center; z-index: 5;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.4);
+        }
+        #channel-logo { flex: 0 0 200px; font-size: 2.2em; font-weight: bold; text-align: center; }
+        
+        #news-ticker-container {
+            flex: 1; min-width: 0;
+            overflow: hidden; background-color: rgba(0,0,0,0.2);
+            height: 100%; display: flex; align-items: center; position: relative;
+        }
+        #news-ticker {
+            font-size: 1.5em; white-space: nowrap;
+            will-change: transform; animation: ticker-scroll 120s linear infinite;
+            animation-play-state: paused;
+        }
+        #news-ticker.ready { animation-play-state: running; }
+        @keyframes ticker-scroll { 0% { transform: translateX(0%); } 100% { transform: translateX(-50%); } }
+
+        #news-loader {
+            width: 80%; height: 4px; background-color: rgba(255,255,255,0.2);
+            margin: 0 auto; overflow: hidden; border-radius: 2px;
+        }
+        #news-loader::before {
+            content: ''; display: block; width: 40%; height: 100%;
+            background-color: var(--text-light); animation: loading-bar 1.5s linear infinite;
+        }
+        @keyframes loading-bar { 0% { transform: translateX(-150%); } 100% { transform: translateX(350%); } }
+
+        /* Nuovo placeholder per il nome della rete TV */
+        #network-name-container {
+            flex-shrink: 0; /* Impedisce al contenitore di restringersi */
+            width: 200px; /* Stessa larghezza che aveva il globo */
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: var(--text-light);
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.5);
+            background-color: rgba(0,0,0,0.2); /* Sfondo leggero per coerenza */
+        }
+
+
+        /* --- 2. MODALITÀ BLOOMBERG --- */
+        #bloomberg-view {
+            width: 100%; height: 100%; padding: 10px; box-sizing: border-box; display: none;
+            grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; gap: 10px;
+            grid-template-areas: "video weather weather" "sports weather weather" "news news clock"; /* Mantiene le stesse aree per ora */
+        }
+        .box {
+            background-color: var(--box-bg-bloomberg); border: 1px solid var(--border-color-dark);
+            border-radius: 5px; padding: 15px; overflow: hidden; display: flex; flex-direction: column;
+        }
+        .box-title {
+            font-size: 1.2em; font-weight: bold; color: var(--secondary-blue);
+            margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid var(--border-color-dark);
+        }
+        #box-video { grid-area: video; padding: 0; }
+        #box-video #webcam-clone { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        #box-weather {
+            grid-area: weather;
+            display: grid; /* Usa grid per i 3 plot */
+            grid-template-columns: 1fr 1fr 1fr; /* Tre colonne uguali */
+            gap: 10px;
+            padding: 10px; /* Adatta il padding per i grafici */
+        }
+        .weather-plot-container {
+            display: flex; flex-direction: column;
+            background-color: rgba(0,0,0,0.1); /* Sfondo leggero per ogni plot */
+            border-radius: 5px; padding: 5px;
+        }
+        .weather-plot-title {
+            font-size: 0.9em; font-weight: bold; text-align: center; color: var(--text-dark);
+            margin-bottom: 5px;
+        }
+        .weather-plot-canvas { flex-grow: 1; position: relative; } /* Per Chart.js */
+
+        #box-sports { grid-area: sports; }
+        #box-news { grid-area: news; }
+        #box-clock { grid-area: clock; justify-content: center; align-items: center; text-align: center; }
+        
+    </style>
+</head>
+<body>
+    <div id="main-container">
+
+        <div id="newscast-view">
+            <div id="video-background"><video id="webcam" autoplay muted playsinline></video></div>
+            <div id="top-bar" class="hud">
+                <div id="weather-info" class="info-box"><span id="weather-icon"></span><span>Caricamento...</span></div>
+                <div id="sports-news" class="info-box"></div>
+            </div>
+            <div id="clock-container" class="hud"><div id="clock"></div><div id="date"></div></div>
+            <div id="journalist-container" class="hud"><span>In conduzione: <b>Mario Rossi</b></span></div>
+            <div id="bottom-bar">
+                <div id="channel-logo">TG JDM</div>
+                <div id="news-ticker-container">
+                    <div id="news-loader"></div><div id="news-ticker"></div>
+                </div>
+                <div id="network-name-container">TG JDM</div> </div>
+        </div>
+
+        <div id="bloomberg-view">
+            <div id="box-video" class="box"><video id="webcam-clone" autoplay muted playsinline></video></div>
+            
+            <div id="box-weather">
+                <div class="weather-plot-container">
+                    <div class="weather-plot-title">Temperatura (°C)</div>
+                    <div class="weather-plot-canvas"><canvas id="tempChart"></canvas></div>
+                </div>
+                <div class="weather-plot-container">
+                    <div class="weather-plot-title">Pressione (hPa)</div>
+                    <div class="weather-plot-canvas"><canvas id="pressureChart"></canvas></div>
+                </div>
+                <div class="weather-plot-container">
+                    <div class="weather-plot-title">Precipitazioni (mm)</div>
+                    <div class="weather-plot-canvas"><canvas id="precipitationChart"></canvas></div>
+                </div>
+            </div>
+
+            <div id="box-sports" class="box"><div class="box-title">SPORT</div><ul id="sports-list"></ul></div>
+            <div id="box-news" class="box"><div class="box-title">ULTIME NOTIZIE</div><ul id="news-list"></ul></div>
+            <div id="box-clock" class="box"><div id="clock-large"></div></div>
+        </div>
+
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const GNEWS_API_KEY = '72f160646daaf843f66b8f3a63be9089'; // <-- IMPORTANTE!
+        const elements = {
+            newscastView: document.getElementById('newscast-view'),
+            bloombergView: document.getElementById('bloomberg-view'),
+            webcam: document.getElementById('webcam'),
+            webcamClone: document.getElementById('webcam-clone'),
+            networkNameContainer: document.getElementById('network-name-container'), // Nuovo elemento
+            weatherInfo: document.getElementById('weather-info'),
+            weatherIcon: document.getElementById('weather-icon'),
+            sportsNews: document.getElementById('sports-news'),
+            sportsList: document.getElementById('sports-list'),
+            newsTicker: document.getElementById('news-ticker'),
+            newsLoader: document.getElementById('news-loader'),
+            newsList: document.getElementById('news-list'),
+            clock: document.getElementById('clock'),
+            date: document.getElementById('date'),
+            clockLarge: document.getElementById('clock-large'),
+            tempChartCanvas: document.getElementById('tempChart'),
+            pressureChartCanvas: document.getElementById('pressureChart'),
+            precipitationChartCanvas: document.getElementById('precipitationChart'),
+        };
+
+        let currentView = 'newscast';
+        let chartInstances = {}; // Per tenere traccia delle istanze dei grafici
+
+        function init() {
+            setupWebcam();
+            // Non chiamiamo più setupThreeJS, il globo è stato rimosso
+            elements.networkNameContainer.textContent = "TG JDM"; // Inizializza il nome della rete
+            fetchWeatherData();
+            fetchNewsData();
+            fetchSportsNewsData();
+            setInterval(updateClock, 1000);
+            setInterval(fetchWeatherData, 15 * 60 * 1000); // Aggiorna ogni 15 minuti
+            document.addEventListener('keydown', (e) => { if (e.key.toLowerCase() === 'f') toggleView(); });
+        }
+        
+        function toggleView() {
+            if (currentView === 'newscast') {
+                elements.newscastView.style.display = 'none';
+                elements.bloombergView.style.display = 'grid';
+                currentView = 'bloomberg';
+            } else {
+                elements.newscastView.style.display = 'block';
+                elements.bloombergView.style.display = 'none';
+                currentView = 'newscast';
+            }
+        }
+
+        async function setupWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                elements.webcam.srcObject = stream;
+                elements.webcamClone.srcObject = stream;
+            } catch (err) { console.error("Errore webcam:", err); }
+        }
+
+        // Il codice per setupThreeJS è stato rimosso in quanto il globo non c'è più
+        // function setupThreeJS() { ... }
+
+        function updateClock() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            const dateStr = now.toLocaleDateString('it-IT', { weekday: 'long', day: '2-digit', month: 'long' });
+            elements.clock.textContent = timeStr;
+            elements.date.textContent = dateStr;
+            elements.clockLarge.innerHTML = `<span style="font-size: 2.5em; font-weight: bold;">${timeStr}</span><br>${dateStr}`;
+        }
+        
+        async function fetchWeatherData() {
+            navigator.geolocation.getCurrentPosition(async position => {
+                const { latitude, longitude } = position.coords;
+                // NUOVA API CALL: 7 giorni passati, nessun dato futuro esplicito per questi plot
+                const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,pressure_msl,precipitation&daily=weather_code,temperature_2m_max,temperature_2m_min,pressure_msl_max,precipitation_sum&past_days=7&forecast_days=0&timezone=auto`;
+                const data = await (await fetch(apiUrl)).json();
+                
+                // Aggiorna HUD principale
+                const { current, current_units } = data;
+                elements.weatherIcon.textContent = getWeatherIcon(current.weather_code);
+                elements.weatherInfo.innerHTML = `<span id="weather-icon">${getWeatherIcon(current.weather_code)}</span><span>TEMP: <b>${current.temperature_2m}${current_units.temperature_2m}</b></span><span>PRESS: <b>${current.pressure_msl} hPa</b></span>`;
+
+                // Renderizza i grafici per la vista Bloomberg
+                renderWeatherChart(data.daily.time, data.daily.temperature_2m_max, elements.tempChartCanvas, 'Temperatura (°C)', 'rgba(217, 4, 41, 1)', 'rgba(217, 4, 41, 0.5)');
+                renderWeatherChart(data.daily.time, data.daily.pressure_msl_max, elements.pressureChartCanvas, 'Pressione (hPa)', 'rgba(0, 85, 164, 1)', 'rgba(0, 85, 164, 0.5)');
+                renderWeatherChart(data.daily.time, data.daily.precipitation_sum, elements.precipitationChartCanvas, 'Precip. (mm)', 'rgba(0, 150, 0, 1)', 'rgba(0, 150, 0, 0.5)');
+                
+            }, () => console.error("Geolocalizzazione non permessa."));
+        }
+
+        function getWeatherIcon(wmoCode) { return {'0':'☀️','1':'🌤️','2':'⛅️','3':'☁️','45':'🌫️','48':'🌫️','51':'🌧️','53':'🌧️','55':'🌧️','61':'💧','63':'💧','65':'💧','71':'🌨️','73':'🌨️','75':'🌨️','80':'🌦️','81':'🌦️','82':'🌦️','95':'⛈️','96':'⛈️','99':'⛈️'}[wmoCode]||'🌍';}
+        
+        function renderWeatherChart(labels, data, canvasElement, chartLabel, borderColor, bgColor) {
+            const chartId = canvasElement.id;
+            if (chartInstances[chartId]) {
+                chartInstances[chartId].destroy(); // Distrugge il vecchio grafico
+            }
+
+            const ctx = canvasElement.getContext('2d');
+            const gradient = ctx.createLinearGradient(0, 0, 0, 150);
+            gradient.addColorStop(0, bgColor);
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); // Trasparente alla fine
+
+            chartInstances[chartId] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels.map(d => new Date(d).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })),
+                    datasets: [{
+                        label: chartLabel,
+                        data: data,
+                        borderColor: borderColor,
+                        backgroundColor: gradient,
+                        fill: true,
+                        tension: 0.4,
+                        pointBackgroundColor: borderColor,
+                        pointBorderColor: '#fff',
+                        pointHoverBackgroundColor: '#fff',
+                        pointHoverBorderColor: borderColor,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.raw}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            ticks: { color: 'var(--text-dark)', autoSkip: true, maxRotation: 0, minRotation: 0 },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)', drawBorder: false }
+                        },
+                        y: {
+                            ticks: { color: 'var(--text-dark)' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)', drawBorder: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        async function fetchNewsData() {
+            elements.newsLoader.style.display='block';elements.newsTicker.classList.remove('ready');let articles;if(GNEWS_API_KEY==='METTI_QUI_LA_TUA_CHIAVE_API_GNEWS'){articles=[{title:"Benvenuti nel telegiornale. Premi 'F' per cambiare visuale."},{title:"Inserisci una API Key per notizie reali."}];}else{try{const data=await(await fetch(`https://gnews.io/api/v4/top-headlines?category=general&lang=it&country=it&max=10&apikey=${GNEWS_API_KEY}`)).json();articles=data.articles;}catch(err){articles=[{title:"Errore caricamento notizie."}];}}
+            const titles=articles.map(a=>a.title);const newsString=titles.join(" +++ ");elements.newsTicker.innerHTML=`<span>${newsString}</span><span>${newsString}</span>`;elements.newsList.innerHTML=titles.map(t=>`<li>${t}</li>`).join('');elements.newsLoader.style.display='none';elements.newsTicker.classList.add('ready');
+        }
+        async function fetchSportsNewsData() {
+            let articles;if(GNEWS_API_KEY==='METTI_QUI_LA_TUA_CHIAVE_API_GNEWS'){articles=[{title:"La squadra locale vince il campionato."}];}else{try{const data=await(await fetch(`https://gnews.io/api/v4/top-headlines?category=sports&lang=it&country=it&max=5&apikey=${GNEWS_API_KEY}`)).json();articles=data.articles;}catch(err){articles=[{title:"Notizie sportive non disponibili."}];}}
+            elements.sportsList.innerHTML=articles.map(a=>`<li>${a.title}</li>`).join('');let currentIndex=0;const update=()=>{if(articles.length>0){elements.sportsNews.innerHTML=`<span><b>SPORT:</b> ${articles[currentIndex].title}</span>`;currentIndex=(currentIndex+1)%articles.length;}};update();setInterval(update,10000);
+        }
+
+        init();
+    });
+    </script>
+</body>
+</html>

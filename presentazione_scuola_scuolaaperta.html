@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>Scuola Aperta VR - Three.js</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        /* --- STILE GLOBALE --- */
+        body {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #000;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* --- STILE HUD (Head-Up Display) --- */
+        :root {
+            --neon-blue: #0af;
+            --glow-color: rgba(0, 170, 255, 0.7);
+            --hud-bg: rgba(0, 20, 40, 0.7);
+            --neon-green: #0f0;
+            --neon-red: #f00;
+            --neon-yellow: #ff0;
+        }
+
+        .hud-panel {
+            position: absolute;
+            background: var(--hud-bg);
+            border: 1px solid var(--neon-blue);
+            box-shadow: 0 0 10px var(--glow-color), inset 0 0 8px rgba(0, 170, 255, 0.3);
+            backdrop-filter: blur(3px);
+            padding: 10px;
+            border-radius: 5px;
+            color: var(--neon-blue);
+        }
+
+        /* --- Pannello Velocità e Orologio (Alto-Sinistra) --- */
+        #speed-panel {
+            top: 10px;
+            left: 10px;
+            width: 300px;
+        }
+        #clock {
+            font-size: 2.5em;
+            text-shadow: 0 0 10px var(--glow-color);
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .slider-group {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+        .slider-group label {
+            min-width: 100px;
+            display: inline-block;
+        }
+        .slider-group input[type="range"] {
+            width: 120px;
+            margin-right: 10px;
+        }
+        .slider-group span {
+            min-width: 60px;
+            text-align: right;
+            font-weight: bold;
+            color: var(--neon-green);
+        }
+        
+        #speed-bar-container {
+            width: 100%;
+            height: 25px;
+            border: 1px solid var(--neon-blue);
+            background: #111;
+            padding: 2px;
+            box-sizing: border-box;
+            border-radius: 3px;
+        }
+        #speed-bar {
+            width: 0%; /* Aggiornato via JS */
+            height: 100%;
+            background: linear-gradient(to right, var(--neon-green), var(--neon-yellow) 70%, var(--neon-red));
+            box-shadow: 0 0 15px var(--neon-green);
+            transition: width 0.1s linear; /* Transizione fluida */
+        }
+
+        /* --- Pannello Console (Basso-Sinistra) --- */
+        #console-panel {
+            bottom: 10px;
+            left: 10px;
+            width: 350px;
+            height: 150px;
+        }
+        #console-title {
+            font-weight: bold;
+            border-bottom: 1px solid var(--neon-blue);
+            padding-bottom: 5px;
+            margin-bottom: 5px;
+        }
+        #console-output {
+            height: 120px;
+            overflow-y: hidden;
+            font-size: 0.8em;
+            color: var(--neon-green);
+        }
+        #console-output > div:first-child { color: #8f8; }
+        #console-output > div:last-child { color: #fff; font-weight: bold; }
+
+        /* --- Pannello Segnale (Basso-Destra) --- */
+        #signal-panel {
+            bottom: 10px;
+            right: 10px;
+            text-align: center;
+        }
+        #signal-plot-canvas {
+            width: 200px; /* Più largo per il segnale vocale */
+            height: 100px;
+            background: #000;
+            border: 1px solid var(--neon-blue);
+            margin-top: 5px;
+        }
+        
+        /* --- Istruzioni --- */
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 0.9em;
+            color: #aaa;
+            border: 1px solid #333;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div id="speed-panel" class="hud-panel">
+        <div id="clock">00:00:00</div>
+        <div class="slider-group">
+            <label for="speed">Limite Velocità:</label>
+            <input type="range" id="speed" min="10" max="100" value="30" step="5">
+            <span id="speed-limit-value">30.0 m/s</span>
+        </div>
+        <div id="speed-bar-container">
+            <div id="speed-bar"></div>
+        </div>
+    </div>
+
+    <div id="console-panel" class="hud-panel">
+        <div id="console-title">SYSTEM LOG</div>
+        <div id="console-output"><div>> SYS_INIT OK</div></div>
+    </div>
+    
+    <div id="signal-panel" class="hud-panel">
+        <div class="sensor-label">MIC_INPUT (LIVE)</div>
+        <canvas id="signal-plot-canvas"></canvas>
+    </div>
+
+    <div id="instructions">
+        W/S: Accelerare/Decelerare | A/D: Imbardata (Yaw) | Frecce ↑/↓: Beccheggio (Pitch) | Frecce ←/→: Rollio (Roll)
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.skypack.dev/three@0.136.0",
+            "FontLoader": "https://cdn.skypack.dev/three@0.136.0/examples/jsm/loaders/FontLoader.js",
+            "TextGeometry": "https://cdn.skypack.dev/three@0.136.0/examples/jsm/geometries/TextGeometry.js"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FontLoader } from 'FontLoader';
+        import { TextGeometry } from 'TextGeometry';
+
+        // --- Variabili Globali ---
+        let scene, camera, renderer, player, clock;
+        let keys = { w: false, s: false, a: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+        let currentSpeed = 0;
+        let maxSpeed = 30;
+        let loadedFont = null;
+        let pulsatingObjects = []; // Array per gli oggetti che pulsano
+
+        // --- Variabili Audio ---
+        let audioContext;
+        let analyser;
+        let dataArray; // Array per i dati della waveform
+
+        // --- Elementi HUD ---
+        const hudClock = document.getElementById('clock');
+        const sliderSpeed = document.getElementById('speed');
+        const valueSpeedLimit = document.getElementById('speed-limit-value');
+        const speedBar = document.getElementById('speed-bar');
+        const consoleOut = document.getElementById('console-output');
+        const signalCanvas = document.getElementById('signal-plot-canvas');
+        const signalCtx = signalCanvas.getContext('2d');
+        let consoleLines = ["> SYS_INIT OK"];
+        
+        // --- Materiali ---
+        const textBodyMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff }); // Colore corpo testo
+
+        // --- Inizializzazione ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050010); // Viola scuro
+            scene.fog = new THREE.Fog(0x050010, 50, 300);
+            clock = new THREE.Clock();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+            
+            player = new THREE.Group();
+            player.position.set(0, 5, 20); // Posizione iniziale
+            player.add(camera);
+            scene.add(player);
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 2);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(50, 50, 25);
+            scene.add(directionalLight);
+
+            // --- Event Listener ---
+            document.addEventListener('keydown', (e) => { if (e.key in keys) keys[e.key] = true; });
+            document.addEventListener('keyup', (e) => { if (e.key in keys) keys[e.key] = false; });
+            window.addEventListener('resize', onWindowResize);
+
+            sliderSpeed.addEventListener('input', (e) => {
+                maxSpeed = parseFloat(e.target.value);
+                valueSpeedLimit.textContent = `${maxSpeed.toFixed(1)} m/s`;
+            });
+
+            // Avvia processi
+            initAudio(); // Chiede accesso al microfono
+            loadAssetsAndBuildWorld(); // Carica il font e poi costruisce il mondo
+            animate();
+        }
+
+        // --- Inizializzazione Audio (Microfono) ---
+        async function initAudio() {
+            logToConsole("> In attesa del microfono...");
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+
+                analyser.fftSize = 256; // Dimensione piccola per waveform
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                
+                logToConsole("> MIC_INPUT OK");
+            } catch (err) {
+                logToConsole(`> ERRORE MIC: ${err.message}`);
+                console.error('Errore accesso microfono:', err);
+            }
+        }
+
+        // --- Caricamento Font e Costruzione Mondo ---
+        function loadAssetsAndBuildWorld() {
+            logToConsole("> Caricamento font...");
+            const fontLoader = new FontLoader();
+            // Carichiamo un font "standard" fornito da Three.js
+            fontLoader.load('https://cdn.skypack.dev/three@0.136.0/examples/fonts/helvetiker_regular.typeface.json',
+                (font) => {
+                    loadedFont = font;
+                    logToConsole("> Font caricato.");
+                    logToConsole("> Costruzione mondo VR...");
+                    buildWorld();
+                    logToConsole("> Mondo costruito. Benvenuto.");
+                },
+                undefined, // onProgress
+                (err) => {
+                    console.error('Errore caricamento font:', err);
+                    logToConsole("> ERRORE FONT");
+                }
+            );
+        }
+
+        // --- Costruzione Mondo ---
+        function buildWorld() {
+            if (!loadedFont) return; // Sicurezza
+
+            // Piano
+            const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+            const groundMaterial = new THREE.MeshStandardMaterial({
+                color: 0x1a0033, // Viola molto scuro
+                wireframe: true,
+                roughness: 1,
+                metalness: 0
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = 0;
+            scene.add(ground);
+            
+            // --- Creazione Pannelli ---
+            // Usa la funzione helper per creare i pannelli
+            
+            // Pannello Titolo (Blu)
+            createImmersivePanel({
+                position: [0, 5, 0],
+                title: "IIS Jacopo da Montagnana",
+                bodyLines: ["Benvenuti alla Scuola Aperta Virtuale", "a cura di: prof. Bertazzo e Mr. GEMINI"],
+                color: 0x00aaff, // Blu
+                width: 15,
+                height: 5
+            });
+
+            // Pannello Indirizzi (Verde)
+            createImmersivePanel({
+                position: [-20, 5, -10],
+                title: "Indirizzi di Studio",
+                bodyLines: [
+                    "- Liceo Scientifico e Scienze Applicate",
+                    "- Web Community Manager",
+                    "- IP: sala, cucina, accoglienza"
+                ],
+                color: 0x00ffaa, // Verde
+                width: 12,
+                height: 7
+            });
+            
+            // Pannello Laboratori (Giallo)
+            createImmersivePanel({
+                position: [20, 5, -10],
+                title: "Laboratori",
+                bodyLines: [
+                    "- Laboratorii di Informatica e Lingue",
+                    "- Laboratorio di Robotica (Industry 4.0) e stampa 3D",
+                    "- Laboratorio di Fisica e Chimica",
+                    "- Laboratorio di Arte e Arti Grafiche",
+                    "- Laboratorio di Musica"
+                ],
+                color: 0xffff00, // Giallo
+                width: 12,
+                height: 7
+            });
+
+            // Pannello Progetti (Rosso/Magenta)
+            createImmersivePanel({
+                position: [0, 5, -30],
+                title: "Progetti e Attivita'",
+                bodyLines: [
+                    "- Astronomia",
+                    "- BioMED",
+                    "- MovieMaker",
+                    "- Robotica",
+                    "- Band Musicale (AULA 8)",
+                    "- Stage Aziendali (PCTO)",
+                    "- Olimpiadi di Matematica e Robotica"
+                ],
+                color: 0xff00cc, // Magenta
+                width: 14,
+                height: 8
+            });
+        }
+        
+        /**
+         * Funzione helper per creare un pannello 3D con testo.
+         * config: { position: [x,y,z], title, bodyLines[], color, width, height }
+         */
+        function createImmersivePanel(config) {
+            if (!loadedFont) return;
+            
+            const { position, title, bodyLines, color, width, height } = config;
+            const panelGroup = new THREE.Group();
+            
+            // 1. Sfondo del pannello
+            const panelGeom = new THREE.PlaneGeometry(width, height);
+            const panelMat = new THREE.MeshBasicMaterial({
+                color: 0x000000,
+                transparent: true,
+                opacity: 0.5
+            });
+            const panelMesh = new THREE.Mesh(panelGeom, panelMat);
+            
+            // 2. Bordo pulsante
+            const edgesGeom = new THREE.EdgesGeometry(panelGeom);
+            const borderMat = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: 1.0,
+                linewidth: 2
+            });
+            const borderLines = new THREE.LineSegments(edgesGeom, borderMat);
+            pulsatingObjects.push(borderMat); // Aggiungi ai materiali da animare
+            
+            // 3. Materiale Titolo (Neon)
+            const titleMat = new THREE.MeshBasicMaterial({ color: color });
+            
+            // 4. Geometria Titolo
+            const titleGeom = new TextGeometry(title, {
+                font: loadedFont,
+                size: 0.5,
+                height: 0.05
+            });
+            titleGeom.computeBoundingBox();
+            const titleWidth = titleGeom.boundingBox.max.x - titleGeom.boundingBox.min.x;
+            const titleMesh = new THREE.Mesh(titleGeom, titleMat);
+            // Posiziona titolo: centrato in X, in alto in Y
+            titleMesh.position.set(-titleWidth / 2, height / 2 - 0.7, 0.1);
+            
+            panelGroup.add(titleMesh);
+            
+            // 5. Geometria Corpo Testo
+            let currentY = height / 2 - 1.5; // Posizione Y iniziale per il corpo
+            bodyLines.forEach(line => {
+                const bodyGeom = new TextGeometry(line, {
+                    font: loadedFont,
+                    size: 0.3,
+                    height: 0.01
+                });
+                bodyGeom.computeBoundingBox();
+                const bodyWidth = bodyGeom.boundingBox.max.x - bodyGeom.boundingBox.min.x;
+                const bodyMesh = new THREE.Mesh(bodyGeom, textBodyMaterial);
+                
+                // Posiziona corpo: quasi centrato (leggero offset a sx), scende per ogni linea
+                bodyMesh.position.set(-width / 2 + 0.5, currentY, 0.1);
+                currentY -= 0.5; // Spazio tra le righe
+                panelGroup.add(bodyMesh);
+            });
+            
+            panelGroup.add(panelMesh);
+            panelGroup.add(borderLines);
+            panelGroup.position.set(position[0], position[1], position[2]);
+            scene.add(panelGroup);
+        }
+        
+
+        // --- Loop di Animazione ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta(); // Tempo trascorso (secondi)
+            const time = clock.getElapsedTime(); // Tempo totale
+
+            updateControls(delta);
+            updateHUD(time);
+            
+            // Animazione bordi pulsanti
+            for (const material of pulsatingObjects) {
+                // Oscilla tra 0.3 e 1.0
+                material.opacity = (Math.sin(time * 5) * 0.5 + 0.5) * 0.7 + 0.3;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Aggiornamento Controlli di Volo ---
+        function updateControls(delta) {
+            const pitchSpeed = Math.PI / 2;
+            const rollSpeed = Math.PI;
+            const yawSpeed = Math.PI / 2;
+            const acceleration = 25.0;
+            const deceleration = 30.0;
+
+            if (keys.w) {
+                currentSpeed = Math.min(maxSpeed, currentSpeed + acceleration * delta);
+            } else if (keys.s) {
+                currentSpeed = Math.max(0, currentSpeed - deceleration * delta);
+            } else {
+                if (currentSpeed > 0) {
+                    currentSpeed -= acceleration * 0.2 * delta;
+                } else {
+                    currentSpeed = 0;
+                }
+            }
+            
+            if (keys.ArrowUp) player.rotateX(-pitchSpeed * delta);
+            if (keys.ArrowDown) player.rotateX(pitchSpeed * delta);
+            if (keys.ArrowLeft) player.rotateZ(rollSpeed * delta);
+            if (keys.ArrowRight) player.rotateZ(-rollSpeed * delta);
+            if (keys.a) player.rotateY(yawSpeed * delta);
+            if (keys.d) player.rotateY(-yawSpeed * delta);
+
+            player.translateZ(-currentSpeed * delta);
+            
+            if (player.position.y < 1.0) { // Altezza minima 1m
+                player.position.y = 1.0;
+            }
+        }
+
+        // --- Aggiornamento Interfaccia (HUD) ---
+        function updateHUD(time) {
+            // 1. Orologio
+            hudClock.textContent = new Date().toLocaleTimeString('it-IT');
+            
+            // 2. Barra Velocità
+            speedBar.style.width = `${(currentSpeed / maxSpeed) * 100}%`;
+            
+            // 3. Plot Segnale Microfono (se disponibile)
+            if (analyser && dataArray) {
+                analyser.getByteTimeDomainData(dataArray); // Ottieni dati waveform
+                
+                const w = signalCanvas.width;
+                const h = signalCanvas.height;
+                signalCtx.clearRect(0, 0, w, h);
+                signalCtx.strokeStyle = 'cyan';
+                signalCtx.lineWidth = 2;
+                signalCtx.beginPath();
+                
+                const sliceWidth = w * 1.0 / dataArray.length;
+                let x = 0;
+
+                for (let i = 0; i < dataArray.length; i++) {
+                    // dataArray contiene valori da 0 a 255 (128 è il silenzio)
+                    const v = dataArray[i] / 128.0; // Normalizza (0-2)
+                    const y = v * h / 2;
+
+                    if (i === 0) {
+                        signalCtx.moveTo(x, y);
+                    } else {
+                        signalCtx.lineTo(x, y);
+                    }
+                    x += sliceWidth;
+                }
+                signalCtx.lineTo(w, h / 2); // Finisce la linea
+                signalCtx.stroke();
+            }
+        }
+        
+        // Helper per la console
+        function logToConsole(message) {
+            consoleLines.push(message);
+            if (consoleLines.length > 6) {
+                consoleLines.shift(); // Rimuovi il più vecchio
+            }
+            consoleOut.innerHTML = consoleLines.map(line => `<div>${line}</div>`).join('');
+        }
+
+        // --- Gestione Resize ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Avvio ---
+        init();
+
+    </script>
+</body>
+</html>

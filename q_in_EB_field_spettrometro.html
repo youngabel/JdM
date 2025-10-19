@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>Spettrometro di Massa (v3)</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body { margin: 0; font-family: sans-serif; background-color: #f0f0f0; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: #000;
+            font-size: 1.2em;
+            z-index: 100;
+        }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            width: 300px;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.85);
+            border-radius: 8px;
+            z-index: 100;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .slider-container {
+            margin-bottom: 5px;
+            font-size: 0.8em;
+            display: flex;
+            align-items: center;
+        }
+        .slider-container label {
+            flex-basis: 50px;
+            text-align: right;
+            margin-right: 5px;
+        }
+        .slider-container input[type="range"] {
+            flex-grow: 1;
+            margin: 0 5px;
+        }
+        .slider-container span {
+            flex-basis: 35px;
+            text-align: left;
+            font-weight: bold;
+        }
+        button {
+            width: 100%;
+            padding: 8px;
+            margin-top: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background-color: #0056b3; }
+        h4 { margin: 10px 0 5px 0; text-align: center; }
+        .main-particle-title { color: #d90000; }
+    </style>
+</head>
+<body>
+
+    <div id="info">Spettrometro di Massa / Carica</div>
+
+    <div id="controls">
+        <h4 class="main-particle-title">Particella Principale (Rossa)</h4>
+        <div class="slider-container">
+            <label for="vSlider">v<sub>z</sub>:</label>
+            <input type="range" id="vSlider" min="1" max="50" value="20" step="1">
+            <span id="vValue">20</span>
+        </div>
+        <div class="slider-container">
+            <label for="qSlider">q:</label>
+            <input type="range" id="qSlider" min="-10" max="10" value="1" step="1">
+            <span id="qValue">1</span>
+        </div>
+        <div class="slider-container">
+            <label for="mSlider">m:</label>
+            <input type="range" id="mSlider" min="1" max="20" value="5" step="1">
+            <span id="mValue">5</span>
+        </div>
+        
+        <h4>Campo Elettrico (Rosso)</h4>
+        <div class="slider-container">
+            <label for="ExSlider">E<sub>x</sub>:</label>
+            <input type="range" id="ExSlider" min="-200" max="200" value="0" step="1">
+            <span id="ExValue">0</span>
+        </div>
+        <div class="slider-container">
+            <label for="EySlider">E<sub>y</sub>:</label>
+            <input type="range" id="EySlider" min="-200" max="200" value="0" step="1">
+            <span id="EyValue">0</span>
+        </div>
+        <div class="slider-container">
+            <label for="EzSlider">E<sub>z</sub>:</label>
+            <input type="range" id="EzSlider" min="-200" max="200" value="0" step="1">
+            <span id="EzValue">0</span>
+        </div>
+
+        <h4>Campo Magnetico (Blu)</h4>
+        <div class="slider-container">
+            <label for="BxSlider">B<sub>x</sub>:</label>
+            <input type="range" id="BxSlider" min="-20" max="20" value="0" step="1">
+            <span id="BxValue">0</span>
+        </div>
+        <div class="slider-container">
+            <label for="BySlider">B<sub>y</sub>:</label>
+            <input type="range" id="BySlider" min="-20" max="20" value="10" step="1">
+            <span id="ByValue">10</span>
+        </div>
+        <div class="slider-container">
+            <label for="BzSlider">B<sub>z</sub>:</label>
+            <input type="range" id="BzSlider" min="-20" max="20" value="0" step="1">
+            <span id="BzValue">0</span>
+        </div>
+
+        <h4>Regione Campo</h4>
+        <div class="slider-container">
+            <label for="boxWidthSlider">Largh (X):</label>
+            <input type="range" id="boxWidthSlider" min="10" max="60" value="40" step="2">
+            <span id="boxWidthValue">40</span>
+        </div>
+        <div class="slider-container">
+            <label for="boxHeightSlider">Altez (Y):</label>
+            <input type="range" id="boxHeightSlider" min="10" max="60" value="30" step="2">
+            <span id="boxHeightValue">30</span>
+        </div>
+        <div class="slider-container">
+            <label for="boxDepthSlider">Prof (Z):</label>
+            <input type="range" id="boxDepthSlider" min="10" max="60" value="40" step="2">
+            <span id="boxDepthValue">40</span>
+        </div>
+
+        <button id="resetButton">RESET SIMULAZIONE</button>
+    </div>
+
+    <script type="module">
+        // Importa Three.js da CDN
+        import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+        import { OrbitControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/OrbitControls.js';
+
+        // --- VARIABILI GLOBALI ---
+        let scene, camera, renderer, controls;
+        let clock = new THREE.Clock();
+        
+        // Parametri di simulazione
+        let simParams = {
+            v0: new THREE.Vector3(0, 0, 20),
+            q: 1, // q della particella rossa
+            m: 5, // m della particella rossa
+            E: new THREE.Vector3(0, 0, 0),
+            B: new THREE.Vector3(0, 10, 0),
+            regionWidth: 40,
+            regionHeight: 30,
+            regionDepth: 40
+        };
+
+        // Regione del campo
+        const regionBox = new THREE.Box3();
+        let fieldRegionMesh;
+
+        // Visualizzatori campi
+        let eFieldGroup, bFieldGroup;
+        const GRID_SIZE = 4;
+        const FIELD_SCALE_FACTOR = 0.3;
+
+        // Reset
+        const RESET_DELAY = 2.0;
+        
+        // --- Particella Principale (Rossa) ---
+        let mainParticle = {
+            mesh: null,
+            trail: null,
+            position: new THREE.Vector3(0, 0, -20),
+            velocity: new THREE.Vector3(0, 0, 20),
+            timeOutside: 0,
+            isOutside: false
+        };
+        
+        // --- Fascio di Particelle ---
+        const BEAM_SIZE = 25;
+        let particleBeam = []; // Array di oggetti particella
+
+        // --- INIT ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(30, 20, 30);
+            camera.lookAt(0, 0, 10);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 0, 10);
+            controls.update();
+
+            scene.add(new THREE.AmbientLight(0x666666));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(5, 10, 7);
+            scene.add(dirLight);
+
+            const gridHelper = new THREE.GridHelper(80, 20);
+            gridHelper.rotation.x = Math.PI / 2;
+            scene.add(gridHelper);
+
+            // Crea Particella Principale
+            const mainGeom = new THREE.SphereGeometry(0.5, 16, 16);
+            const mainMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            mainParticle.mesh = new THREE.Mesh(mainGeom, mainMat);
+            scene.add(mainParticle.mesh);
+            mainParticle.trail = createTrail(0xff0000, 1.0); // Scia rossa opaca
+            scene.add(mainParticle.trail);
+
+            // Crea Fascio di Particelle
+            const particleGeom = new THREE.SphereGeometry(0.3, 12, 12); // Più piccole
+            for (let i = 0; i < BEAM_SIZE; i++) {
+                const particle = {
+                    mesh: new THREE.Mesh(particleGeom.clone(), new THREE.MeshBasicMaterial({ color: 0xffffff })),
+                    trail: createTrail(0xffffff, 0.5), // Scie più tenui
+                    position: new THREE.Vector3(),
+                    velocity: new THREE.Vector3(),
+                    q: 1,
+                    m: 1,
+                    timeOutside: 0,
+                    isOutside: false
+                };
+                scene.add(particle.mesh);
+                scene.add(particle.trail);
+                particleBeam.push(particle);
+            }
+            
+            // Gruppi per le frecce dei campi
+            eFieldGroup = new THREE.Group();
+            bFieldGroup = new THREE.Group();
+            scene.add(eFieldGroup);
+            scene.add(bFieldGroup);
+            createFieldVisualizers();
+            
+            setupUI();
+            updateRegionBox();
+            resetSimulation();
+        }
+
+        // Helper per creare una scia
+        function createTrail(color, opacity) {
+            const material = new THREE.LineBasicMaterial({
+                color: color,
+                transparent: true,
+                opacity: opacity
+            });
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(500 * 3); // Max 500 punti
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            return new THREE.Line(geometry, material);
+        }
+
+        // --- UI ---
+        function setupUI() {
+            const sliders = {
+                vSlider: { id: "vValue", obj: simParams.v0, prop: 'z', factor: 1, callback: resetSimulation },
+                qSlider: { id: "qValue", obj: simParams, prop: 'q', factor: 1 },
+                mSlider: { id: "mValue", obj: simParams, prop: 'm', factor: 1 },
+                ExSlider: { id: "ExValue", obj: simParams.E, prop: 'x', factor: 1, callback: updateFieldVisualizers },
+                EySlider: { id: "EyValue", obj: simParams.E, prop: 'y', factor: 1, callback: updateFieldVisualizers },
+                EzSlider: { id: "EzValue", obj: simParams.E, prop: 'z', factor: 1, callback: updateFieldVisualizers },
+                BxSlider: { id: "BxValue", obj: simParams.B, prop: 'x', factor: 1, callback: updateFieldVisualizers },
+                BySlider: { id: "ByValue", obj: simParams.B, prop: 'y', factor: 1, callback: updateFieldVisualizers },
+                BzSlider: { id: "BzValue", obj: simParams.B, prop: 'z', factor: 1, callback: updateFieldVisualizers },
+                boxWidthSlider: { id: "boxWidthValue", obj: simParams, prop: 'regionWidth', factor: 1, callback: updateRegionBox },
+                boxHeightSlider: { id: "boxHeightValue", obj: simParams, prop: 'regionHeight', factor: 1, callback: updateRegionBox },
+                boxDepthSlider: { id: "boxDepthValue", obj: simParams, prop: 'regionDepth', factor: 1, callback: updateRegionBox }
+            };
+
+            for (let sliderId in sliders) {
+                const slider = document.getElementById(sliderId);
+                const display = document.getElementById(sliders[sliderId].id);
+                const { obj, prop, factor, callback } = sliders[sliderId];
+
+                slider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+                    obj[prop] = value * factor;
+                    display.textContent = value.toString();
+                    if (callback) callback();
+                });
+            }
+            document.getElementById('resetButton').addEventListener('click', resetSimulation);
+            window.addEventListener('resize', onWindowResize, false);
+        }
+        
+        // --- GESTIONE REGIONE E CAMPI (Invariata) ---
+        function updateRegionBox() {
+            const { regionWidth, regionHeight, regionDepth } = simParams;
+            regionBox.min.set(-regionWidth / 2, -regionHeight / 2, 0);
+            regionBox.max.set(regionWidth / 2, regionHeight / 2, regionDepth);
+
+            if (fieldRegionMesh) {
+                scene.remove(fieldRegionMesh);
+                fieldRegionMesh.geometry.dispose();
+                fieldRegionMesh.material.dispose();
+            }
+            const regionGeom = new THREE.BoxGeometry(regionWidth, regionHeight, regionDepth);
+            const regionMaterial = new THREE.MeshBasicMaterial({
+                color: 0x0099ff, transparent: true, opacity: 0.1, wireframe: true
+            });
+            fieldRegionMesh = new THREE.Mesh(regionGeom, regionMaterial);
+            fieldRegionMesh.position.set(0, 0, regionDepth / 2);
+            scene.add(fieldRegionMesh);
+            updateFieldVisualizers();
+        }
+        function createFieldVisualizers() {
+            const origin = new THREE.Vector3(0, 0, 0);
+            const dir = new THREE.Vector3(1, 0, 0);
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    for (let k = 0; k < GRID_SIZE; k++) {
+                        const arrowE = new THREE.ArrowHelper(dir, origin, 0.1, 0xff0000);
+                        const arrowB = new THREE.ArrowHelper(dir, origin, 0.1, 0x0000ff);
+                        arrowE.visible = false;
+                        arrowB.visible = false;
+                        eFieldGroup.add(arrowE);
+                        bFieldGroup.add(arrowB);
+                    }
+                }
+            }
+        }
+        function updateFieldVisualizers() {
+            const E = simParams.E, B = simParams.B;
+            const lenE = E.length(), lenB = B.length();
+            const dirE = E.clone().normalize(), dirB = B.clone().normalize();
+            const scaledLenE = lenE * FIELD_SCALE_FACTOR;
+            const scaledLenB = lenB * FIELD_SCALE_FACTOR;
+            const { min, max } = regionBox;
+            const size = new THREE.Vector3().subVectors(max, min);
+            let n = 0;
+            for (let i = 0; i < GRID_SIZE; i++) {
+                const x = min.x + (size.x / (GRID_SIZE - 1 + 0.001)) * i;
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    const y = min.y + (size.y / (GRID_SIZE - 1 + 0.001)) * j;
+                    for (let k = 0; k < GRID_SIZE; k++) {
+                        const z = min.z + (size.z / (GRID_SIZE - 1 + 0.001)) * k;
+                        const arrowE = eFieldGroup.children[n];
+                        const arrowB = bFieldGroup.children[n];
+                        arrowE.position.set(x, y, z);
+                        arrowB.position.set(x, y, z);
+                        if (scaledLenE > 0.01) {
+                            arrowE.setDirection(dirE);
+                            arrowE.setLength(scaledLenE, 0.2 * scaledLenE, 0.1 * scaledLenE);
+                            arrowE.visible = true;
+                        } else { arrowE.visible = false; }
+                        if (scaledLenB > 0.01) {
+                            arrowB.setDirection(dirB);
+                            arrowB.setLength(scaledLenB, 0.2 * scaledLenB, 0.1 * scaledLenB);
+                            arrowB.visible = true;
+                        } else { arrowB.visible = false; }
+                        n++;
+                    }
+                }
+            }
+        }
+
+        // --- LOGICA DI SIMULAZIONE ---
+
+        // Resetta l'intera simulazione
+        function resetSimulation() {
+            // Resetta Particella Principale
+            mainParticle.position.set(0, 0, -20);
+            mainParticle.velocity.copy(simParams.v0);
+            mainParticle.timeOutside = 0;
+            mainParticle.isOutside = false;
+            resetTrail(mainParticle.trail, mainParticle.position);
+            mainParticle.mesh.position.copy(mainParticle.position);
+
+            // Resetta tutte le particelle del fascio
+            particleBeam.forEach(p => resetBeamParticle(p));
+        }
+
+        // Resetta una singola particella del fascio
+        function resetBeamParticle(p) {
+            // Posizione y casuale (sorgente lineare)
+            const y_start = (Math.random() - 0.5) * simParams.regionHeight * 0.8;
+            p.position.set(0, y_start, -20);
+            
+            // Stessa velocità iniziale per tutti (fondamentale per lo spettrometro)
+            p.velocity.copy(simParams.v0);
+            
+            // Massa casuale (sempre positiva)
+            p.m = Math.random() * 19 + 1; // Range 1-20
+            
+            // Carica casuale (positiva o negativa, mai zero)
+            p.q = (Math.random() * 18 + 2) * (Math.random() > 0.5 ? 1 : -1); // Range +- 2-20
+            
+            // Colora in base alla carica
+            let color;
+            if (p.q > 0) { // Sfumature di verde/giallo
+                color = new THREE.Color().setHSL(0.3 - p.q * 0.01, 1, 0.5);
+            } else { // Sfumature di ciano/blu
+                color = new THREE.Color().setHSL(0.5 + p.q * 0.01, 1, 0.5);
+            }
+            p.mesh.material.color.set(color);
+            p.trail.material.color.set(color);
+
+            p.timeOutside = 0;
+            p.isOutside = false;
+            resetTrail(p.trail, p.position);
+            p.mesh.position.copy(p.position);
+        }
+
+        // Azzera la scia
+        function resetTrail(trail, startPosition) {
+            const positions = trail.geometry.attributes.position.array;
+            for (let i = 0; i < positions.length; i++) positions[i] = 0;
+            positions[0] = startPosition.x;
+            positions[1] = startPosition.y;
+            positions[2] = startPosition.z;
+            trail.geometry.attributes.position.needsUpdate = true;
+            trail.geometry.setDrawRange(0, 1);
+        }
+
+        // Funzione di fisica (usata da tutte le particelle)
+        function updateParticleState(p, q, m, dt) {
+            let currentE = new THREE.Vector3(0, 0, 0);
+            let currentB = new THREE.Vector3(0, 0, 0);
+            let force = new THREE.Vector3(0, 0, 0);
+            
+            if (regionBox.containsPoint(p.position)) {
+                currentE.copy(simParams.E);
+                currentB.copy(simParams.B);
+                p.isOutside = false;
+                p.timeOutside = 0;
+            } else {
+                if (!p.isOutside) {
+                    p.isOutside = true;
+                    p.timeOutside = 0;
+                }
+                p.timeOutside += dt;
+            }
+
+            if (q !== 0) {
+                const forceE = currentE.clone().multiplyScalar(q);
+                const forceM = new THREE.Vector3().crossVectors(p.velocity, currentB).multiplyScalar(q);
+                force.addVectors(forceE, forceM);
+            }
+
+            if (m !== 0) {
+                const acceleration = force.divideScalar(m);
+                p.velocity.add(acceleration.clone().multiplyScalar(dt));
+                p.position.add(p.velocity.clone().multiplyScalar(dt));
+            }
+            
+            p.mesh.position.copy(p.position);
+            return p.isOutside; // Ritorna lo stato
+        }
+
+        // Aggiorna la fisica per tutte le particelle
+        function updatePhysics(dt) {
+            // Aggiorna Particella Principale
+            const mainIsOutside = updateParticleState(mainParticle, simParams.q, simParams.m, dt);
+            if (mainIsOutside && mainParticle.timeOutside > RESET_DELAY) {
+                resetSimulation(); // La rossa resetta tutto
+                return; // Esce per evitare aggiornamenti doppi
+            }
+
+            // Aggiorna Particelle del Fascio
+            particleBeam.forEach(p => {
+                const isOutside = updateParticleState(p, p.q, p.m, dt);
+                if (isOutside && p.timeOutside > RESET_DELAY) {
+                    resetBeamParticle(p); // Le altre resettano solo se stesse
+                }
+            });
+        }
+
+        // Aggiorna la scia (logica generica)
+        function updateTrail(trail, newPosition) {
+            const positions = trail.geometry.attributes.position.array;
+            const drawRange = trail.geometry.drawRange.count;
+            
+            for (let i = drawRange * 3; i > 0; i -= 3) {
+                if (i < positions.length) {
+                    positions[i] = positions[i - 3];
+                    positions[i + 1] = positions[i - 2];
+                    positions[i + 2] = positions[i - 1];
+                }
+            }
+            
+            positions[0] = newPosition.x;
+            positions[1] = newPosition.y;
+            positions[2] = newPosition.z;
+
+            if (drawRange < 499) { // 500-1
+                trail.geometry.setDrawRange(0, drawRange + 1);
+            }
+            
+            trail.geometry.attributes.position.needsUpdate = true;
+        }
+        
+        // --- LOOP PRINCIPALE ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta(), 0.02); // Limita dt
+            
+            updatePhysics(dt);
+            
+            // Aggiorna tutte le scie
+            updateTrail(mainParticle.trail, mainParticle.position);
+            particleBeam.forEach(p => updateTrail(p.trail, p.position));
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- VIA! ---
+        init();
+        animate();
+
+    </script>
+</body>
+</html>

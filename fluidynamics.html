@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>Simulatore di Fluidi 2D v3</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: #0f0; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; }
+        #controls { position: absolute; top: 80px; left: 10px; padding: 10px; background: rgba(0, 50, 0, 0.7); border: 1px solid #0f0; max-width: 220px; }
+        .control-group { margin-bottom: 15px; }
+        .control-group label { display: block; margin-bottom: 5px; }
+        .control-group button { background: #030; color: #0f0; border: 1px solid #0f0; padding: 5px; cursor: pointer; margin-top: 5px; width: 100%; text-align: left; }
+        .control-group button.active { background: #0a0; color: #000; font-weight: bold; }
+        input[type="range"] { width: 100%; }
+        #header { position: absolute; top: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; background: #010; border-bottom: 1px solid #0f0; height: 60px; }
+        #header-left, #header-right { flex: 1; text-align: center; }
+        #header-title { flex: 2; text-align: center; font-size: 1.5em; letter-spacing: 4px; }
+        #footer { position: absolute; bottom: 0; width: 100%; background: #010; border-top: 1px solid #0f0; height: 30px; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; box-sizing: border-box; }
+        #terminal-text::after { content: '_'; animation: blink 1s step-end infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        #clock { font-family: 'Orbitron', sans-serif; }
+        
+        #controls {
+            /* ... (tutte le altre regole ci sono già) ... */
+            opacity: 0; /* Aggiungi: Rendi invisibile di default */
+            transition: opacity 0.5s ease; /* Aggiungi: Transizione fluida */
+        }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <div id="header-left">-- SIMULAZIONE FLUIDODINAMICA --</div>
+        <div id="header-title">[ FLUID SIMULATOR v3 ]</div>
+        <div id="header-right">-- EULERIAN GRID METHOD --</div>
+    </div>
+
+    <div id="controls">
+        <div class="control-group">
+            <label for="cellSize">Dimensione Cella: <span id="cellSizeVal">6</span></label>
+            <input type="range" id="cellSize" min="5" max="50" value="20">
+        </div>
+        <div class="control-group">
+            <label for="friction">Viscosità (Attrito Interno): <span id="frictionVal">0.005</span></label>
+            <input type="range" id="friction" min="0" max="0.1" step="0.001" value="0.01">
+        </div>
+        <div class="control-group">
+            <label for="borderFriction">Attrito Bordi/Ostacolo: <span id="borderFrictionVal">0.01</span></label>
+            <input type="range" id="borderFriction" min="0" max="0.5" step="0.01" value="0.1">
+        </div>
+         <div class="control-group">
+            <label>Sorgente Pulsata:</label>
+            <button id="btnSourceOff">Spenta</button>
+            <button id="btnSourceLinear" class="active">Lineare</button>
+            <button id="btnSourcePoint">Puntiforme</button>
+            <button id="btnSourceDouble">Doppia</button>
+        </div>
+        <div class="control-group">
+            <label>Condizioni Bordo Orizzontale:</label>
+            <button id="btnPeriodicLR" class="active">Periodica</button>
+            <button id="btnSourceSink">Muro/Pozzo</button>
+        </div>
+        <div class="control-group">
+            <label>Condizioni Bordo Verticale:</label>
+            <button id="btnPeriodicTB"class="active">Periodica</button>
+            <button id="btnWallsTB">Muri</button>
+        </div>
+        <div class="control-group">
+            <button id="btnObstacle">Attiva Ostacolo</button>
+        </div>
+    </div>
+
+    <div id="footer">
+        <div id="terminal-text">> Inizializzazione simulazione...</div>
+        <div id="clock"></div>
+    </div>
+
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.157.0/build/three.module.js" } }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+
+        let scene, camera, renderer;
+        let cols, rows;
+        let cellSize;
+        let cells = [];
+        let particles = [];
+        let obstacle = null;
+        let simulationTime = 0;
+
+        // --- Parametri di Simulazione ---
+        let friction, borderFriction;
+        let periodicLR = false;
+        let periodicTB = false;
+        let useSink = true; // Pozzo a destra
+        let obstacleActive = false;
+        let sourceType = 'off'; // 'off', 'linear', 'point', 'double'
+        const SOURCE_STRENGTH = 100.0;
+        const OBSTACLE_RADIUS_MULTIPLIER = 4;
+
+        // --- Elementi UI ---
+        const terminalText = document.getElementById('terminal-text');
+        const clockDiv = document.getElementById('clock');
+        const cellSizeSlider = document.getElementById('cellSize');
+        const frictionSlider = document.getElementById('friction');
+        const borderFrictionSlider = document.getElementById('borderFriction');
+        const btnObstacle = document.getElementById('btnObstacle');
+        
+        // ... (subito dopo la dichiarazione della variabile btnObstacle)
+
+        // --- Logica per mostrare/nascondere i controlli ---
+        const controlsBox = document.getElementById('controls');
+        let hideControlsTimeout; // Variabile per memorizzare il timer
+
+        // Funzione per mostrare i controlli
+        function showControls() {
+            controlsBox.style.opacity = '1'; // Rendi il box visibile
+            clearTimeout(hideControlsTimeout); // Cancella il timer precedente
+            // Imposta un nuovo timer per nascondere il box dopo 2.5 secondi di inattività
+            hideControlsTimeout = setTimeout(() => {
+                controlsBox.style.opacity = '0';
+            }, 2500);
+        }
+
+        // Aggiungi un ascoltatore di eventi per il movimento del mouse sull'intera finestra
+        window.addEventListener('mousemove', showControls);
+
+        // --- Inizializzazione ---
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.OrthographicCamera(window.innerWidth / -2, window.innerWidth / 2, window.innerHeight / 2, window.innerHeight / -2, 1, 1000);
+            camera.position.z = 5;
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            setupUI();
+            resetSimulation();
+            animate();
+            updateClock();
+            setInterval(updateClock, 1000);
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function setupUI() {
+            const updateSliderLabel = (slider, labelId) => document.getElementById(labelId).textContent = slider.value;
+            cellSizeSlider.addEventListener('input', () => updateSliderLabel(cellSizeSlider, 'cellSizeVal'));
+            cellSizeSlider.addEventListener('change', resetSimulation);
+
+            frictionSlider.addEventListener('input', () => {
+                updateSliderLabel(frictionSlider, 'frictionVal');
+                friction = parseFloat(frictionSlider.value);
+            });
+            friction = parseFloat(frictionSlider.value);
+
+            borderFrictionSlider.addEventListener('input', () => {
+                updateSliderLabel(borderFrictionSlider, 'borderFrictionVal');
+                borderFriction = parseFloat(borderFrictionSlider.value);
+            });
+            borderFriction = parseFloat(borderFrictionSlider.value);
+            
+            const setupButtonGroup = (buttons, callback) => {
+                buttons.forEach(button => {
+                    button.addEventListener('click', () => {
+                        buttons.forEach(btn => btn.classList.remove('active'));
+                        button.classList.add('active');
+                        callback(button.id);
+                    });
+                });
+            };
+
+            setupButtonGroup(
+                [document.getElementById('btnSourceOff'), document.getElementById('btnSourceLinear'), document.getElementById('btnSourcePoint'), document.getElementById('btnSourceDouble')],
+                (id) => {
+                    sourceType = id.replace('btnSource', '').toLowerCase();
+                    terminalText.textContent = `> Sorgente impostata su: ${sourceType}`;
+                }
+            );
+            setupButtonGroup(
+                [document.getElementById('btnPeriodicLR'), document.getElementById('btnSourceSink')],
+                (id) => {
+                    periodicLR = (id === 'btnPeriodicLR');
+                    useSink = !periodicLR;
+                    terminalText.textContent = `> Bordo Orizzontale: ${periodicLR ? 'Periodico' : 'Muro/Pozzo'}`;
+                }
+            );
+            setupButtonGroup(
+                [document.getElementById('btnPeriodicTB'), document.getElementById('btnWallsTB')],
+                (id) => {
+                    periodicTB = (id === 'btnPeriodicTB');
+                    terminalText.textContent = `> Bordo Verticale: ${periodicTB ? 'Periodico' : 'Muri'}`;
+                }
+            );
+
+            btnObstacle.addEventListener('click', () => {
+                obstacleActive = !obstacleActive;
+                btnObstacle.classList.toggle('active');
+                if (obstacleActive) { addObstacle(); terminalText.textContent = "> Ostacolo Attivato"; }
+                else { removeObstacle(); terminalText.textContent = "> Ostacolo Disattivato"; }
+            });
+        }
+
+        function resetSimulation() {
+            while(scene.children.length > 0) {
+                const obj = scene.children[0];
+                scene.remove(obj);
+                if(obj.geometry) obj.geometry.dispose();
+                if(obj.material) obj.material.dispose();
+            }
+            particles = []; cells = [];
+            cellSize = parseInt(cellSizeSlider.value);
+            cols = Math.floor(window.innerWidth / cellSize);
+            rows = Math.floor(window.innerHeight / cellSize);
+
+            const particleGeometry = new THREE.CircleGeometry(cellSize * 0.4, 8);
+            for (let i = 0; i < cols; i++) {
+                cells[i] = [];
+                for (let j = 0; j < rows; j++) {
+                    cells[i][j] = { vx: 0, vy: 0 };
+                    const particle = new THREE.Mesh(particleGeometry, new THREE.MeshBasicMaterial({ color: 0x00ffcc }));
+                    particle.position.set((i - cols / 2 + 0.5) * cellSize, (j - rows / 2 + 0.5) * cellSize, 0);
+                    scene.add(particle);
+                    particles.push(particle);
+                }
+            }
+            if (obstacleActive) addObstacle();
+            terminalText.textContent = `> CLICCARE NOVAMENTE TUTTI I TASTI ATTIVI PARTENDO DA SOTTO - Griglia ricreata: ${cols}x${rows} celle.`;
+        }
+        
+        function addObstacle() {
+            if (obstacle) removeObstacle();
+            const radius = cellSize * OBSTACLE_RADIUS_MULTIPLIER;
+            const geometry = new THREE.CircleGeometry(radius, 32);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff4444 });
+            obstacle = new THREE.Mesh(geometry, material);
+            obstacle.position.z = 1; // Davanti al fluido
+            obstacle.userData.radius = radius;
+            scene.add(obstacle);
+        }
+
+        function removeObstacle() {
+            if (obstacle) {
+                scene.remove(obstacle);
+                obstacle.geometry.dispose();
+                obstacle.material.dispose();
+                obstacle = null;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            simulationTime += 0.05;
+            updateSimulation();
+            render();
+        }
+
+        function updateSimulation() {
+            const nextCells = cells.map(arr => arr.slice()); // Copia più veloce per 2D
+            const pulse = (Math.sin(simulationTime) + 1) / 1; // Valore [0, 1]
+
+            // --- Applica Sorgente (Indipendente dai bordi) ---
+            if (sourceType !== 'off') {
+                const sourceForce = SOURCE_STRENGTH * pulse * 0.5;
+                for (let i = 0; i < cols; i++) {
+                    for (let j = 0; j < rows; j++) {
+                        switch (sourceType) {
+                            case 'linear': if (i < 2) nextCells[i][j].vx += sourceForce; break;
+                            case 'point': if (i === 2 && j > rows/2 - 2 && j < rows/2 + 2) nextCells[i][j].vx += sourceForce * 5; break;
+                            case 'double': if (i === 2 && ((j > rows/4 - 2 && j < rows/4 + 2) || (j > 3*rows/4 - 2 && j < 3*rows/4 + 2))) nextCells[i][j].vx += sourceForce * 5; break;
+                        }
+                    }
+                }
+            }
+            
+            // --- Advection & Viscosità ---
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    let prevX = i - cells[i][j].vx;
+                    let prevY = j - cells[i][j].vy;
+
+                    if (periodicLR) prevX = (prevX % cols + cols) % cols;
+                    if (periodicTB) prevY = (prevY % rows + rows) % rows;
+                    
+                    const pX = Math.max(0.0, Math.min(cols - 1.001, prevX));
+                    const pY = Math.max(0.0, Math.min(rows - 1.001, prevY));
+                    const i0 = Math.floor(pX), i1 = i0 + 1;
+                    const j0 = Math.floor(pY), j1 = j0 + 1;
+                    const tx = pX - i0, ty = pY - j0;
+
+                    const vx0 = cells[i0][j0].vx * (1 - ty) + cells[i0][j1].vx * ty;
+                    const vx1 = cells[i1][j0].vx * (1 - ty) + cells[i1][j1].vx * ty;
+                    const vy0 = cells[i0][j0].vy * (1 - ty) + cells[i0][j1].vy * ty;
+                    const vy1 = cells[i1][j0].vy * (1 - ty) + cells[i1][j1].vy * ty;
+
+                    nextCells[i][j].vx = (vx0 * (1 - tx) + vx1 * tx) * (1 - friction);
+                    nextCells[i][j].vy = (vy0 * (1 - tx) + vy1 * tx) * (1 - friction);
+                }
+            }
+            cells = nextCells;
+
+            // --- Proiezione (Incomprimibilità) ---
+            for (let k = 0; k < 10; k++) {
+                for (let i = 0; i < cols; i++) {
+                    for (let j = 0; j < rows; j++) {
+                        const i_p1 = (i + 1) % cols, i_m1 = (i - 1 + cols) % cols;
+                        const j_p1 = (j + 1) % rows, j_m1 = (j - 1 + rows) % rows;
+                        
+                        const right_vx = periodicLR || i + 1 < cols ? cells[i_p1][j].vx : -cells[i][j].vx;
+                        const left_vx  = periodicLR || i - 1 >= 0 ? cells[i_m1][j].vx : -cells[i][j].vx;
+                        const top_vy   = periodicTB || j + 1 < rows ? cells[i][j_p1].vy : -cells[i][j].vy;
+                        const bot_vy   = periodicTB || j - 1 >= 0 ? cells[i][j_m1].vy : -cells[i][j].vy;
+                        let divergence = (right_vx - left_vx + top_vy - bot_vy) * 0.5;
+                        
+                        cells[i][j].vx -= divergence * 0.5; cells[i_m1][j].vx += divergence * 0.5;
+                        cells[i][j].vy -= divergence * 0.5; cells[i][j_m1].vy += divergence * 0.5;
+                    }
+                }
+            }
+            
+            // --- Bordi e Ostacolo ---
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    if (!periodicLR) {
+                        if (i === 0) cells[i][j].vx *= -(1 - borderFriction);
+                        if (i === cols - 1) cells[i][j].vx *= -(1 - borderFriction);
+                    }
+                    if (!periodicTB) {
+                        if (j === 0) cells[i][j].vy *= -(1 - borderFriction);
+                        if (j === rows - 1) cells[i][j].vy *= -(1 - borderFriction);
+                    }
+                    if (useSink && i > cols - 3) { cells[i][j].vx *= 0.1; cells[i][j].vy *= 0.1; }
+
+                    if (obstacleActive && obstacle) {
+                        const cellPos = new THREE.Vector2((i - cols / 2 + 0.5) * cellSize, (j - rows / 2 + 0.5) * cellSize);
+                        const dist = cellPos.distanceTo(obstacle.position);
+                        if (dist < obstacle.userData.radius) {
+                            const normal = cellPos.sub(obstacle.position).normalize();
+                            const dot = normal.x * cells[i][j].vx + normal.y * cells[i][j].vy;
+                            // Riflessione perfetta (angolo incidenza = angolo riflessione)
+                            cells[i][j].vx -= 2 * normal.x * dot;
+                            cells[i][j].vy -= 2 * normal.y * dot;
+                            // Applica attrito dell'ostacolo
+                            cells[i][j].vx *= (1 - borderFriction);
+                            cells[i][j].vy *= (1 - borderFriction);
+                        }
+                    }
+                }
+            }
+        }
+
+        function render() {
+            const worldLeft = window.innerWidth / -2, worldRight = window.innerWidth / 2;
+            const worldTop = window.innerHeight / 2, worldBottom = window.innerHeight / -2;
+
+            particles.forEach((p, index) => {
+                const i = Math.floor(index / rows);
+                const j = index % rows;
+                const cell = cells[i][j];
+
+                p.position.x += cell.vx * 3;
+                p.position.y += cell.vy * 3;
+
+                // --- Contenimento Visivo delle Particelle ---
+                if (!periodicLR) {
+                    p.position.x = Math.max(worldLeft, Math.min(worldRight, p.position.x));
+                }
+                if (!periodicTB) {
+                    p.position.y = Math.max(worldBottom, Math.min(worldTop, p.position.y));
+                }
+
+                // Reset se si allontana troppo dal centro della sua cella
+                const cellCenterX = (i - cols / 2 + 0.5) * cellSize;
+                const cellCenterY = (j - rows / 2 + 0.5) * cellSize;
+                const distFromCenter = p.position.distanceTo(new THREE.Vector2(cellCenterX, cellCenterY));
+                if (distFromCenter > cellSize * 2) {
+                    p.position.x = cellCenterX;
+                    p.position.y = cellCenterY;
+                }
+                
+                // Colora in base alla velocità
+                const speed = Math.sqrt(cell.vx * cell.vx + cell.vy * cell.vy);
+                p.material.color.setHSL(0.5 + Math.min(speed * 2, 0.5), 0.8, 0.5);
+            });
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.left = window.innerWidth / -2; camera.right = window.innerWidth / 2;
+            camera.top = window.innerHeight / 2; camera.bottom = window.innerHeight / -2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            resetSimulation();
+        }
+
+        function updateClock() {
+            const now = new Date();
+            const date = now.toLocaleDateString('it-IT');
+            const time = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            clockDiv.textContent = `${date} ${time}`;
+        }
+
+        init();
+    </script>
+</body>
+</html>

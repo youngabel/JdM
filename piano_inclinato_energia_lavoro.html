@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulazione Piano Inclinato 2D (v3.0)</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; background-color: #111; color: #fff; display: flex; flex-direction: column; align-items: center; height: 100vh; overflow: hidden; }
+        h1 { flex-shrink: 0; }
+        #main-wrapper { display: flex; width: 95%; height: 85%; gap: 20px; }
+        #left-panel { flex: 0 0 55%; display: flex; flex-direction: column; gap: 10px; }
+        #right-panel { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
+        #simulation-container { flex-grow: 1; border: 1px solid #444; background-color: #000; display: flex; justify-content: center; align-items: center; }
+        #controls-container { flex-shrink: 0; background-color: #222; padding: 5px; border-radius: 5px; }
+        .chart-container { width: 100%; height: 32%; background-color: #222; border-radius: 8px; padding: 10px; box-sizing: border-box; }
+        canvas { display: block; }
+        .lil-gui { --background-color: #222; --text-color: #eee; --widget-color: #444; --hover-color: #555; --focus-color: #5a93e2; --number-color: #5a93e2; }
+        
+        /* Aggiungi questo al tuo blocco <style> */
+        .title-container {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            width: 95%;
+            flex-shrink: 0;
+        }
+
+        .title-container h1 {
+            margin: 0 20px;
+            font-size: 1.8em;
+            text-align: center;
+        }
+
+        .title-container h2 {
+            font-size: 1.2em;
+            color: #999;
+            font-weight: 300;
+        }
+        
+        /* Aggiungi anche questo al tuo blocco <style> */
+        #terminal-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 35px;
+            background-color: #1a1a1a;
+            border-top: 1px solid #444;
+            padding: 0 15px;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 16px;
+            color: #00ff41; /* Colore verde del terminale */
+        }
+
+        .cursor {
+            display: inline-block;
+            width: 10px;
+            height: 18px;
+            background-color: #00ff41;
+            margin-left: 5px;
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+            from, to { background-color: transparent; }
+            50% { background-color: #00ff41; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="title-container">
+        <h2>prof. BERTAZZO N. | mr. Gemini</h2>
+        <h1>Simulazione Piano Inclinato e Orizzontale (2D)</h1>
+        <h2>iis JdM</h2>
+    </div>
+    
+    <div id="main-wrapper">
+        <div id="left-panel">
+            <div id="simulation-container">
+                <canvas id="canvas" width="800" height="500"></canvas>
+            </div>
+            <div id="controls-container"></div>
+        </div>
+        <div id="right-panel">
+            <div class="chart-container">
+                <canvas id="positionChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="velocityChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="accelerationChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script type="importmap">{ "imports": { "lil-gui": "https://unpkg.com/lil-gui@0.19.1/dist/lil-gui.esm.js" } }</script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script type="module">
+        import GUI from 'lil-gui';
+
+        // ========== CANVAS SETUP ==========
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+
+        const originX = canvasWidth / 2 - 100;
+        const originY = canvasHeight - 100;
+
+        // ========== SIMULATION PARAMETERS ==========
+        const params = {
+            angle: 30,
+            mu_inclined: 0.1,
+            mu_horizontal: 0.2,
+        };
+        const g = 9.81;
+        const mass = 1;
+        const inclinedPlaneLength = 300;
+        const horizontalPlaneLength = 350;
+        const boxSize = 25;
+        const forceScale = 7; // Aumentato per maggiore visibilità
+        const physicsScale = 50;
+
+        // ========== STATE VARIABLES ==========
+        let time, position, velocity, onInclinedPlane;
+        let accelerationInclined, accelerationHorizontal, velAtBottom;
+
+        // ========== CHART SETUP ==========
+        const chartOptions = {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Tempo (s)', color: '#fff' }, ticks: { color: '#fff' } },
+                y: { title: { display: true, color: '#fff' }, ticks: { color: '#fff' } }
+            },
+            plugins: { legend: { labels: { color: '#fff' } } },
+            animation: false
+        };
+        const posChart = new Chart(document.getElementById('positionChart'), {
+            type: 'line', data: { datasets: [{ label: 'Posizione (m)', data: [], borderColor: '#ff6384', borderWidth: 2, pointRadius: 0 }] }, options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, title: { ...chartOptions.scales.y.title, text: 'Posizione (m)' } } } }
+        });
+        const velChart = new Chart(document.getElementById('velocityChart'), {
+            type: 'line', data: { datasets: [{ label: 'Velocità (m/s)', data: [], borderColor: '#36a2eb', borderWidth: 2, pointRadius: 0 }] }, options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, title: { ...chartOptions.scales.y.title, text: 'Velocità (m/s)' } } } }
+        });
+        const accChart = new Chart(document.getElementById('accelerationChart'), {
+            type: 'line', data: { datasets: [{ label: 'Accelerazione (m/s²)', data: [], borderColor: '#4bc0c0', borderWidth: 2, pointRadius: 0 }] }, options: { ...chartOptions, scales: { ...chartOptions.scales, y: { ...chartOptions.scales.y, title: { ...chartOptions.scales.y.title, text: 'Accelerazione (m/s²)' } } } }
+        });
+
+        function clearCharts() { [posChart, velChart, accChart].forEach(c => { c.data.datasets[0].data = []; c.update('none'); }); }
+        function updateCharts(t, p, v, a) {
+            posChart.data.datasets[0].data.push({ x: t, y: p });
+            velChart.data.datasets[0].data.push({ x: t, y: v });
+            accChart.data.datasets[0].data.push({ x: t, y: a });
+            [posChart, velChart, accChart].forEach(c => c.update('none'));
+        }
+
+        // ========== DRAWING FUNCTIONS ==========
+        function drawArrow(startX, startY, vecX, vecY, color, lineWidth = 3, label = '') {
+            const headlen = 10;
+            const endX = startX + vecX;
+            const endY = startY + vecY;
+            const angle = Math.atan2(vecY, vecX);
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY);
+            ctx.lineTo(endX - headlen * Math.cos(angle - Math.PI / 6), endY - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(endX - headlen * Math.cos(angle + Math.PI / 6), endY - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.stroke();
+            if (label) {
+                ctx.fillStyle = color;
+                ctx.font = '14px Arial';
+                ctx.fillText(label, endX + 10, endY);
+            }
+            ctx.restore();
+        }
+
+        function drawScene(boxCenterX, boxCenterY, boxRotation) {
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+            const thetaRad = params.angle * Math.PI / 180;
+            const cosTheta = Math.cos(thetaRad);
+            const sinTheta = Math.sin(thetaRad);
+
+            const startInclinedX = originX - inclinedPlaneLength * cosTheta;
+            const startInclinedY = originY - inclinedPlaneLength * sinTheta;
+
+            ctx.save();
+            ctx.strokeStyle = '#cccccc';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(startInclinedX, startInclinedY);
+            ctx.lineTo(originX, originY);
+            ctx.lineTo(originX + horizontalPlaneLength, originY);
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.save();
+            ctx.translate(boxCenterX, boxCenterY);
+            ctx.rotate(boxRotation);
+            ctx.fillStyle = '#ffa500';
+            ctx.fillRect(-boxSize / 2, -boxSize / 2, boxSize, boxSize);
+            ctx.restore();
+
+            // === Disegna Vettori ===
+            const Fg_mag = mass * g;
+            drawArrow(boxCenterX, boxCenterY, 0, Fg_mag * forceScale, 'red', 3, 'Fg');
+
+            if (onInclinedPlane) {
+                // Vettori unitari del sistema di riferimento locale (Frenet)
+                const tang_x = cosTheta; // Vettore tangente, parallelo al piano
+                const tang_y = sinTheta;
+                const norm_x = sinTheta; // Vettore normale, perpendicolare al piano
+                const norm_y = -cosTheta;
+
+                const Fg_para_mag = Fg_mag * sinTheta;
+                const Fg_perp_mag = Fg_mag * cosTheta;
+                const N_mag = Fg_perp_mag;
+                const Fatt_mag = params.mu_inclined * N_mag;
+
+                // Proiezioni Fg (usano i vettori T e N)
+                drawArrow(boxCenterX, boxCenterY, Fg_para_mag * forceScale * tang_x, Fg_para_mag * forceScale * tang_y, 'magenta', 1.5, 'Fg∥');
+                drawArrow(boxCenterX, boxCenterY, Fg_perp_mag * forceScale * (-norm_x), Fg_perp_mag * forceScale * (-norm_y), 'magenta', 1.5, 'Fg⊥');
+
+                // Reazione Normale (lungo la normale uscente)
+                drawArrow(boxCenterX, boxCenterY, N_mag * forceScale * norm_x, N_mag * forceScale * norm_y, 'lime', 3, 'N');
+                
+                // Attrito (opposto alla tangente)
+                if (velocity > 0 || accelerationInclined > 0) {
+                    drawArrow(boxCenterX, boxCenterY, -Fatt_mag * forceScale * tang_x, -Fatt_mag * forceScale * tang_y, 'cyan', 3, 'Fatt');
+                }
+            } else { // Piano orizzontale
+                const N_mag = Fg_mag;
+                const Fatt_mag = params.mu_horizontal * N_mag;
+                
+                // Reazione Normale (sempre su, -y)
+                drawArrow(boxCenterX, boxCenterY, 0, -N_mag * forceScale, 'lime', 3, 'N');
+                
+                // Attrito (sempre indietro, -x)
+                if (velocity > 0) {
+                     drawArrow(boxCenterX, boxCenterY, -Fatt_mag * forceScale, 0, 'cyan', 3, 'Fatt');
+                }
+            }
+        }
+
+        // ========== SIMULATION LOGIC ==========
+        function resetSimulation() {
+            time = 0; position = 0; velocity = 0;
+            onInclinedPlane = true;
+            clearCharts();
+
+            const thetaRad = params.angle * Math.PI / 180;
+            const sinTheta = Math.sin(thetaRad);
+            const cosTheta = Math.cos(thetaRad);
+            const L_inclined_m = inclinedPlaneLength / physicsScale;
+            
+            accelerationInclined = g * (sinTheta - params.mu_inclined * cosTheta);
+            if (accelerationInclined < 0) accelerationInclined = 0;
+            
+            velAtBottom = Math.sqrt(2 * accelerationInclined * L_inclined_m);
+            if (isNaN(velAtBottom)) velAtBottom = 0;
+
+            accelerationHorizontal = -params.mu_horizontal * g;
+
+            const startX = originX - inclinedPlaneLength * cosTheta;
+            const startY = originY - inclinedPlaneLength * sinTheta;
+            drawScene(startX, startY, thetaRad);
+        }
+
+        // ========== GUI SETUP ==========
+        const gui = new GUI({ container: document.getElementById('controls-container') });
+        gui.add(params, 'angle', 1, 89, 1).name('Angolo Inclinazione (°)').onChange(resetSimulation);
+        gui.add(params, 'mu_inclined', 0, 2.0, 0.01).name('Attrito Inclinato (μ₁)').onChange(resetSimulation);
+        gui.add(params, 'mu_horizontal', 0, 2.0, 0.01).name('Attrito Orizzontale (μ₂)').onChange(resetSimulation);
+
+        // ========== ANIMATION LOOP ==========
+        let lastTimestamp = 0;
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+            const deltaTime = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+            if (deltaTime > 0.1 || deltaTime <= 0) return;
+
+            time += deltaTime;
+            const thetaRad = params.angle * Math.PI / 180;
+            const cosTheta = Math.cos(thetaRad);
+            const sinTheta = Math.sin(thetaRad);
+
+            let currentAcceleration = 0;
+            let boxX, boxY, boxRot;
+            const L_inclined_m = inclinedPlaneLength / physicsScale;
+            const L_horizontal_m = horizontalPlaneLength / physicsScale;
+
+            if (onInclinedPlane) {
+                currentAcceleration = accelerationInclined;
+                velocity += currentAcceleration * deltaTime;
+                position += velocity * deltaTime;
+
+                if (position >= L_inclined_m) {
+                    onInclinedPlane = false;
+                    const overshoot = position - L_inclined_m;
+                    position = overshoot; // Inizia il tratto orizzontale con la distanza in eccesso
+                    velocity = velAtBottom;
+                } else {
+                    const pos_px = position * physicsScale;
+                    boxX = (originX - inclinedPlaneLength * cosTheta) + pos_px * cosTheta;
+                    boxY = (originY - inclinedPlaneLength * sinTheta) + pos_px * sinTheta;
+                    boxRot = thetaRad;
+                }
+            }
+            
+            if (!onInclinedPlane) {
+                currentAcceleration = accelerationHorizontal;
+                velocity += currentAcceleration * deltaTime;
+                if (velocity < 0) velocity = 0;
+                position += velocity * deltaTime;
+
+                boxRot = 0;
+                const pos_px = position * physicsScale;
+                boxX = originX + pos_px;
+                boxY = originY;
+
+                if (velocity <= 0 || position >= L_horizontal_m) {
+                    resetSimulation();
+                    return;
+                }
+            }
+
+            updateCharts(time, onInclinedPlane ? position : L_inclined_m + position, velocity, currentAcceleration);
+            drawScene(boxX, boxY, boxRot);
+        }
+
+        resetSimulation();
+        lastTimestamp = performance.now();
+        animate(lastTimestamp);
+        
+        // Aggiungi questo alla fine del tuo <script type="module">
+
+        const terminalTextElement = document.getElementById('terminal-text');
+        const textToType = [
+            "Analisi in corso...",
+            "Teorema lavoro-energia: ΔE_k = L_totale.",
+            "L_attrito = -μ * N * d.",
+            "In assenza di attrito, l'energia meccanica si conserva.",
+            "Modifica i parametri per osservare i diversi regimi di moto.",
+            "Simulazione riavviata."
+        ];
+
+        let textIndex = 0;
+        let charIndex = 0;
+
+        function typeWriter() {
+            if (charIndex < textToType[textIndex].length) {
+                terminalTextElement.textContent += textToType[textIndex].charAt(charIndex);
+                charIndex++;
+                setTimeout(typeWriter, 50); // Velocità di battitura
+            } else {
+                // Pausa alla fine della frase, poi cancella
+                setTimeout(deleteWriter, 2500);
+            }
+        }
+
+        function deleteWriter() {
+            if (charIndex > 0) {
+                terminalTextElement.textContent = textToType[textIndex].substring(0, charIndex - 1);
+                charIndex--;
+                setTimeout(deleteWriter, 30); // Velocità di cancellazione
+            } else {
+                // Passa alla frase successiva
+                textIndex = (textIndex + 1) % textToType.length;
+                setTimeout(typeWriter, 500); // Pausa prima di iniziare la nuova frase
+            }
+        }
+
+        // Avvia l'effetto
+        setTimeout(typeWriter, 1500);
+    </script>
+    
+    <div id="terminal-container">
+        <span id="terminal-text"></span><span class="cursor"></span>
+    </div>
+
+</body>
+</html>

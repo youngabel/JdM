@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulazione Urti Ellittici ☄️ (Velocità Istantanea)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        canvas {
+            background-color: #000;
+            border: 1px solid #444;
+            display: block;
+        }
+        #controls {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 5px 10px;
+            align-items: center;
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            width: 90%;
+            max-width: 1000px;
+            box-sizing: border-box;
+        }
+        label {
+            justify-self: end;
+            font-size: 0.9em;
+        }
+        input[type="range"] {
+            width: 100%;
+            cursor: pointer;
+        }
+        span {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #aaa;
+            min-width: 50px;
+            justify-self: start;
+        }
+        h2 {
+            margin: 5px 0 10px 0;
+            font-weight: 300;
+            color: #00bcd4;
+        }
+        button {
+            grid-column: 1 / -1;
+            padding: 10px;
+            font-size: 1.2em;
+            font-weight: bold;
+            background-color: #00bcd4;
+            color: #111;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #00e5ff;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Simulazione Urti Ellittici ☄️</h2>
+    <canvas id="simulationCanvas"></canvas>
+    
+    <div id="controls">
+        <label for="sliderA">Semiasse 'a' (X):</label>
+        <input type="range" id="sliderA" min="100" max="600" value="350">
+        <span id="valA">350</span>
+
+        <label for="sliderB">Semiasse 'b' (Y):</label>
+        <input type="range" id="sliderB" min="100" max="400" value="250">
+        <span id="valB">250</span>
+
+        <label for="sliderX">Posizione X:</label>
+        <input type="range" id="sliderX" min="250" max="950" value="600">
+        <span id="valX">600</span>
+
+        <label for="sliderY">Posizione Y:</label>
+        <input type="range" id="sliderY" min="200" max="600" value="400">
+        <span id="valY">400</span>
+
+        <label for="sliderAngle">Angolo (°):</label>
+        <input type="range" id="sliderAngle" min="0" max="360" value="180">
+        <span id="valAngle">180°</span>
+
+        <label for="sliderSpeed">Velocità (px/frame):</label>
+        <input type="range" id="sliderSpeed" min="1" max="15" value="7" step="0.1">
+        <span id="valSpeed">7.0</span>
+
+        <label for="sliderRestitution">Elasticità (e):</label>
+        <input type="range" id="sliderRestitution" min="0.1" max="1.0" value="0.9" step="0.01">
+        <span id="valRestitution">0.90</span>
+
+        <label for="sliderBurst">Particelle/lancio:</label>
+        <input type="range" id="sliderBurst" min="1" max="500" value="50" step="1">
+        <span id="valBurst">50</span>
+        
+        <label for="sliderTrail">Dissolvenza (α):</label>
+        <input type="range" id="sliderTrail" min="0.01" max="0.5" value="0.1" step="0.01">
+        <span id="valTrail">0.10</span>
+
+        <button id="shootButton">SPARA</button>
+    </div>
+
+    <script>
+        // --- Setup Canvas ---
+        const canvas = document.getElementById('simulationCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = Math.min(window.innerWidth - 40, 1200);
+        canvas.height = Math.min(window.innerHeight - 310, 800); // Più spazio per il nuovo slider
+
+        const W = canvas.width;
+        const H = canvas.height;
+        const CX = W / 2;
+        const CY = H / 2;
+
+        let particles = [];
+        let launchParams = {};
+        let conicParams = {};
+
+        // --- Riferimenti agli Elementi UI ---
+        const sliders = {
+            a: document.getElementById('sliderA'),
+            b: document.getElementById('sliderB'),
+            x: document.getElementById('sliderX'),
+            y: document.getElementById('sliderY'),
+            angle: document.getElementById('sliderAngle'),
+            speed: document.getElementById('sliderSpeed'),
+            restitution: document.getElementById('sliderRestitution'), // Aggiunto
+            burst: document.getElementById('sliderBurst'),
+            trail: document.getElementById('sliderTrail'),
+        };
+
+        const values = {
+            a: document.getElementById('valA'),
+            b: document.getElementById('valB'),
+            x: document.getElementById('valX'),
+            y: document.getElementById('valY'),
+            angle: document.getElementById('valAngle'),
+            speed: document.getElementById('valSpeed'),
+            restitution: document.getElementById('valRestitution'), // Aggiunto
+            burst: document.getElementById('valBurst'),
+            trail: document.getElementById('valTrail'),
+        };
+
+        const shootButton = document.getElementById('shootButton');
+
+        // --- Funzione Principale di Aggiornamento Parametri ---
+        function updateAllParams() {
+            conicParams.a = parseFloat(sliders.a.value);
+            conicParams.b = parseFloat(sliders.b.value);
+            conicParams.a2 = conicParams.a * conicParams.a;
+            conicParams.b2 = conicParams.b * conicParams.b;
+
+            const c_squared = Math.abs(conicParams.a2 - conicParams.b2);
+            conicParams.c = Math.sqrt(c_squared);
+
+            const rangeX = conicParams.a * 0.98;
+            const rangeY = conicParams.b * 0.98;
+
+            sliders.x.min = CX - rangeX;
+            sliders.x.max = CX + rangeX;
+            sliders.y.min = CY - rangeY;
+            sliders.y.max = CY + rangeY;
+
+            if (parseFloat(sliders.x.value) < sliders.x.min) sliders.x.value = sliders.x.min;
+            if (parseFloat(sliders.x.value) > sliders.x.max) sliders.x.value = sliders.x.max;
+            if (parseFloat(sliders.y.value) < sliders.y.min) sliders.y.value = sliders.y.min;
+            if (parseFloat(sliders.y.value) > sliders.y.max) sliders.y.value = sliders.y.max;
+
+
+            launchParams.x = parseFloat(sliders.x.value);
+            launchParams.y = parseFloat(sliders.y.value);
+            launchParams.angle = parseFloat(sliders.angle.value);
+            launchParams.speed = parseFloat(sliders.speed.value);
+            launchParams.restitution = parseFloat(sliders.restitution.value); // Aggiunto
+            launchParams.burstCount = parseInt(sliders.burst.value, 10);
+            launchParams.trailAlpha = parseFloat(sliders.trail.value);
+
+            values.a.textContent = conicParams.a.toFixed(0);
+            values.b.textContent = conicParams.b.toFixed(0);
+            values.x.textContent = launchParams.x.toFixed(0);
+            values.y.textContent = launchParams.y.toFixed(0);
+            values.angle.textContent = `${launchParams.angle}°`;
+            values.speed.textContent = launchParams.speed.toFixed(1);
+            values.restitution.textContent = launchParams.restitution.toFixed(2); // Aggiunto
+            values.burst.textContent = launchParams.burstCount;
+            values.trail.textContent = launchParams.trailAlpha.toFixed(2);
+        }
+
+        Object.values(sliders).forEach(slider => {
+            slider.addEventListener('input', updateAllParams);
+        });
+
+        // --- Funzioni Utili ---
+
+        function mapRange(value, inMin, inMax, outMin, outMax) {
+            return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+        }
+
+        function getColorForSpeed(speed) {
+            const minSpeed = 0; // Il minimo ora è 0
+            const maxSpeed = parseFloat(sliders.speed.max); // Il massimo è la velocità massima di lancio
+            // Mappa la velocità a un HUE (da 240=Blu/Lento a 0=Rosso/Veloce)
+            // Usiamo clamp per assicurarci che i valori non escano dal range
+            const clampedSpeed = Math.max(minSpeed, Math.min(speed, maxSpeed));
+            const hue = mapRange(clampedSpeed, minSpeed, maxSpeed, 240, 0);
+            return `hsl(${hue}, 100%, 70%)`;
+        }
+
+        function createParticle() {
+            const angleRad = launchParams.angle * (Math.PI / 180);
+            const vx = launchParams.speed * Math.cos(angleRad);
+            const vy = launchParams.speed * Math.sin(angleRad);
+            
+            const x = launchParams.x + (Math.random() - 0.5) * 2;
+            const y = launchParams.y + (Math.random() - 0.5) * 2;
+
+            return {
+                x: x,
+                y: y,
+                vx: vx,
+                vy: vy
+                // Nota: non impostiamo più speed e color qui,
+                // verranno calcolati al primo frame nel loop di animazione.
+            };
+        }
+
+        function launchBurst() {
+            const normX = (launchParams.x - CX) / conicParams.a;
+            const normY = (launchParams.y - CY) / conicParams.b;
+            const isInside = (normX * normX + normY * normY) < 1.0;
+
+            if (isInside) {
+                for (let i = 0; i < launchParams.burstCount; i++) {
+                    particles.push(createParticle());
+                }
+            }
+        }
+        
+        shootButton.addEventListener('click', launchBurst);
+
+        // --- Loop di Animazione ---
+        function animate() {
+            // 1. Sfondo con dissolvenza
+            ctx.fillStyle = `rgba(0, 0, 0, ${launchParams.trailAlpha})`;
+            ctx.fillRect(0, 0, W, H);
+
+            // 2. Ellisse
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(CX, CY, conicParams.a, conicParams.b, 0, 0, 2 * Math.PI);
+            ctx.stroke();
+
+            // 3. Fuochi
+            ctx.fillStyle = '#ff0000';
+            if (conicParams.a > conicParams.b) {
+                ctx.beginPath();
+                ctx.arc(CX + conicParams.c, CY, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(CX - conicParams.c, CY, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            } else {
+                ctx.beginPath();
+                ctx.arc(CX, CY + conicParams.c, 3, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(CX, CY - conicParams.c, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            }
+
+            // 4. Punto di lancio
+            const normX = (launchParams.x - CX) / conicParams.a;
+            const normY = (launchParams.y - CY) / conicParams.b;
+            const isInside = (normX * normX + normY * normY) < 1.0;
+            
+            ctx.strokeStyle = isInside ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 0, 0, 0.8)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(launchParams.x - 5, launchParams.y);
+            ctx.lineTo(launchParams.x + 5, launchParams.y);
+            ctx.moveTo(launchParams.x, launchParams.y - 5);
+            ctx.lineTo(launchParams.x, launchParams.y + 5);
+            ctx.stroke();
+
+            // 5. Mirino laser
+            ctx.strokeStyle = 'rgba(255, 255, 0, 0.7)';
+            ctx.setLineDash([5, 5]);
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(launchParams.x, launchParams.y);
+            const angleRad = launchParams.angle * (Math.PI / 180);
+            const laserLength = Math.max(W, H);
+            ctx.lineTo(launchParams.x + laserLength * Math.cos(angleRad),
+                       launchParams.y + laserLength * Math.sin(angleRad));
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 6. Aggiorna e disegna particelle
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // --- Controllo Collisione (Numerico) ---
+                const checkX = p.x - CX;
+                const checkY = p.y - CY;
+                const ellipseValue = (checkX * checkX) / conicParams.a2 + (checkY * checkY) / conicParams.b2;
+
+                if (ellipseValue > 1.0) {
+                    // --- Calcolo Urto Realistico (con Restituzione) ---
+                    const Nx = (2 * checkX) / conicParams.a2;
+                    const Ny = (2 * checkY) / conicParams.b2;
+                    
+                    const mag = Math.sqrt(Nx * Nx + Ny * Ny);
+                    const nx = Nx / mag;
+                    const ny = Ny / mag;
+
+                    const vx = p.vx;
+                    const vy = p.vy;
+
+                    const dot = vx * nx + vy * ny;
+                    
+                    // [MODIFICA] Formula di riflessione anelastica
+                    // v_new = v - (1 + e) * dot(v, n) * n
+                    const e = launchParams.restitution;
+                    const new_vx = vx - (1 + e) * dot * nx;
+                    const new_vy = vy - (1 + e) * dot * ny;
+
+                    p.vx = new_vx;
+                    p.vy = new_vy;
+
+                    // Spingi numericamente la particella di nuovo dentro
+                    let currentEllipseVal = ellipseValue;
+                    while (currentEllipseVal > 1.0) {
+                        p.x -= nx * 0.1;
+                        p.y -= ny * 0.1;
+                        const newCheckX = p.x - CX;
+                        const newCheckY = p.y - CY;
+                        currentEllipseVal = (newCheckX * newCheckX) / conicParams.a2 + (newCheckY * newCheckY) / conicParams.b2;
+                    }
+                }
+
+                // --- [MODIFICA] Calcolo velocità e colore ISTANTANEO ---
+                const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+                const color = getColorForSpeed(speed);
+
+                // Disegna Particella
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 1.5, 0, 2 * Math.PI);
+                ctx.fill();
+
+                // Pulizia (se la particella è quasi ferma o fuori schermo)
+                if (speed < 0.1 || p.x < -W * 0.5 || p.x > W * 1.5 || p.y < -H * 0.5 || p.y > H * 1.5) {
+                    particles.splice(i, 1);
+                }
+            }
+            
+            // Limita particelle
+            const maxParticles = 50000;
+            if (particles.length > maxParticles) {
+                particles.splice(0, particles.length - maxParticles);
+            }
+
+            // 7. Richiedi il prossimo frame
+            requestAnimationFrame(animate);
+        }
+
+        // --- Avvio ---
+        updateAllParams();
+        animate();
+
+    </script>
+
+</body>
+</html>

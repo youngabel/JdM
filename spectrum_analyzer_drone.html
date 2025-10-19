@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>Scuola Aperta VR - Audio Lab</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        /* --- STILE GLOBALE --- */
+        body {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #000;
+            color: #fff;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+        }
+
+        /* --- STILE HUD (Head-Up Display) --- */
+        :root {
+            --neon-blue: #0af;
+            --glow-color: rgba(0, 170, 255, 0.7);
+            --hud-bg: rgba(0, 20, 40, 0.7);
+            --neon-green: #0f0;
+            --neon-red: #f00;
+            --neon-yellow: #ff0;
+        }
+
+        .hud-panel {
+            position: absolute;
+            background: var(--hud-bg);
+            border: 1px solid var(--neon-blue);
+            box-shadow: 0 0 10px var(--glow-color), inset 0 0 8px rgba(0, 170, 255, 0.3);
+            backdrop-filter: blur(3px);
+            padding: 10px;
+            border-radius: 5px;
+            color: var(--neon-blue);
+        }
+
+        /* --- Pannello Velocità e Orologio (Alto-Sinistra) --- */
+        #speed-panel {
+            top: 10px;
+            left: 10px;
+            width: 320px; /* Leggermente più largo */
+        }
+        #clock {
+            font-size: 2.5em;
+            text-shadow: 0 0 10px var(--glow-color);
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .slider-group {
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+        .slider-group label {
+            min-width: 120px; /* Più largo per la nuova label */
+            display: inline-block;
+        }
+        .slider-group input[type="range"] {
+            width: 120px;
+            margin-right: 10px;
+        }
+        .slider-group span {
+            min-width: 60px;
+            text-align: right;
+            font-weight: bold;
+            color: var(--neon-green);
+        }
+        
+        #speed-bar-container {
+            width: 100%;
+            height: 25px;
+            border: 1px solid var(--neon-blue);
+            background: #111;
+            padding: 2px;
+            box-sizing: border-box;
+            border-radius: 3px;
+        }
+        #speed-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(to right, var(--neon-green), var(--neon-yellow) 70%, var(--neon-red));
+            transition: width 0.1s linear;
+        }
+
+        /* --- Pannello Console (Basso-Sinistra) --- */
+        #console-panel {
+            bottom: 10px;
+            left: 10px;
+            width: 350px;
+            height: 150px;
+        }
+        #console-title {
+            font-weight: bold;
+            border-bottom: 1px solid var(--neon-blue);
+            padding-bottom: 5px;
+            margin-bottom: 5px;
+        }
+        #console-output {
+            height: 120px;
+            overflow-y: hidden;
+            font-size: 0.8em;
+            color: var(--neon-green);
+        }
+        
+        /* --- Istruzioni --- */
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 0.9em;
+            color: #aaa;
+            border: 1px solid #333;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div id="speed-panel" class="hud-panel">
+        <div id="clock">00:00:00</div>
+        <div class="slider-group">
+            <label for="speed">Limite Velocità:</label>
+            <input type="range" id="speed" min="10" max="100" value="30" step="5">
+            <span id="speed-limit-value">30.0 m/s</span>
+        </div>
+        <div class="slider-group">
+            <label for="fft-bands">Risoluzione FFT:</label>
+            <input type="range" id="fft-bands" min="5" max="11" value="9" step="1">
+            <span id="fft-bands-value">512</span>
+        </div>
+        <div id="speed-bar-container">
+            <div id="speed-bar"></div>
+        </div>
+    </div>
+
+    <div id="console-panel" class="hud-panel">
+        <div id="console-title">SYSTEM LOG</div>
+        <div id="console-output"><div>> SYS_INIT OK</div></div>
+    </div>
+    
+    <div id="instructions">
+        W/S: Accelerare/Decelerare | A/D: Imbardata (Yaw) | Frecce ↑/↓: Beccheggio (Pitch) | Frecce ←/→: Rollio (Roll)
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.skypack.dev/three@0.136.0",
+            "FontLoader": "https://cdn.skypack.dev/three@0.136.0/examples/jsm/loaders/FontLoader.js",
+            "TextGeometry": "https://cdn.skypack.dev/three@0.136.0/examples/jsm/geometries/TextGeometry.js"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FontLoader } from 'FontLoader';
+        import { TextGeometry } from 'TextGeometry';
+
+        // --- Variabili Globali ---
+        let scene, camera, renderer, player, clock;
+        let keys = { w: false, s: false, a: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+        let currentSpeed = 0;
+        let maxSpeed = 30;
+        let loadedFont = null;
+        let pulsatingObjects = []; // Array per gli oggetti che pulsano
+        let dynamicPanels = []; // Array per i pannelli dinamici (audio)
+
+        // --- Variabili Audio ---
+        let audioContext;
+        let analyser;
+        let dataArray; // Array per i dati della waveform (tempo)
+        let frequencyDataArray; // Array per i dati delle frequenze (FFT)
+
+        // --- Elementi HUD ---
+        const hudClock = document.getElementById('clock');
+        const sliderSpeed = document.getElementById('speed');
+        const valueSpeedLimit = document.getElementById('speed-limit-value');
+        const speedBar = document.getElementById('speed-bar');
+        const sliderFft = document.getElementById('fft-bands');
+        const valueFft = document.getElementById('fft-bands-value');
+        const consoleOut = document.getElementById('console-output');
+        let consoleLines = ["> SYS_INIT OK"];
+        
+        // --- Inizializzazione ---
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050010); // Viola scuro
+            scene.fog = new THREE.Fog(0x050010, 50, 300);
+            clock = new THREE.Clock();
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+            
+            player = new THREE.Group();
+            player.position.set(0, 5, 20); // Posizione iniziale
+            player.add(camera);
+            scene.add(player);
+
+            const ambientLight = new THREE.AmbientLight(0x404040, 2);
+            scene.add(ambientLight);
+
+            // --- Event Listener ---
+            document.addEventListener('keydown', (e) => { if (e.key in keys) keys[e.key] = true; });
+            document.addEventListener('keyup', (e) => { if (e.key in keys) keys[e.key] = false; });
+            window.addEventListener('resize', onWindowResize);
+
+            sliderSpeed.addEventListener('input', (e) => {
+                maxSpeed = parseFloat(e.target.value);
+                valueSpeedLimit.textContent = `${maxSpeed.toFixed(1)} m/s`;
+            });
+            
+            sliderFft.addEventListener('input', onFftSliderChange);
+
+            // Avvia processi
+            initAudio(); // Chiede accesso al microfono
+            loadAssetsAndBuildWorld(); // Carica il font e poi costruisce il mondo
+            animate();
+        }
+        
+        // --- Gestione Slider FFT ---
+        function onFftSliderChange(e) {
+            const newFftSize = Math.pow(2, parseInt(e.target.value));
+            valueFft.textContent = newFftSize;
+            
+            if (analyser) {
+                analyser.fftSize = newFftSize;
+                const bufferLength = analyser.frequencyBinCount;
+                // Ricrea gli array con la nuova dimensione
+                dataArray = new Uint8Array(bufferLength);
+                frequencyDataArray = new Uint8Array(bufferLength);
+            }
+        }
+
+        // --- Inizializzazione Audio (Microfono) ---
+        async function initAudio() {
+            logToConsole("> In attesa del microfono...");
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+
+                // Applica il valore iniziale dello slider
+                const initialFftSize = Math.pow(2, parseInt(sliderFft.value));
+                analyser.fftSize = initialFftSize;
+                
+                const bufferLength = analyser.frequencyBinCount;
+                dataArray = new Uint8Array(bufferLength);
+                frequencyDataArray = new Uint8Array(bufferLength);
+                
+                logToConsole("> MIC_INPUT OK");
+            } catch (err) {
+                logToConsole(`> ERRORE MIC: ${err.message}`);
+                console.error('Errore accesso microfono:', err);
+            }
+        }
+
+        // --- Caricamento Font e Costruzione Mondo ---
+        function loadAssetsAndBuildWorld() {
+            logToConsole("> Caricamento font...");
+            const fontLoader = new FontLoader();
+            fontLoader.load('https://cdn.skypack.dev/three@0.136.0/examples/fonts/helvetiker_regular.typeface.json',
+                (font) => {
+                    loadedFont = font;
+                    logToConsole("> Font caricato.");
+                    logToConsole("> Costruzione mondo VR...");
+                    buildWorld();
+                    logToConsole("> Mondo costruito. Benvenuto.");
+                },
+                undefined,
+                (err) => { console.error('Errore caricamento font:', err); }
+            );
+        }
+
+        // --- Costruzione Mondo ---
+        function buildWorld() {
+            if (!loadedFont) return; // Sicurezza
+
+            // Piano
+            const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+            const groundMaterial = new THREE.MeshStandardMaterial({
+                color: 0x1a0033, wireframe: true, roughness: 1, metalness: 0
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            scene.add(ground);
+            
+            // --- Creazione Pannelli Audio ---
+            const panelWidth = 10;
+            const panelHeight = 5;
+
+            // Pannello Waveform (Dominio Tempo)
+            createAudioPanel({
+                type: 'waveform',
+                position: [-12, 5, 0],
+                title: "Dominio del Tempo (Waveform)",
+                color: 0x00aaff, // Blu
+                width: panelWidth,
+                height: panelHeight,
+                canvasSize: [512, 256]
+            });
+
+            // Pannello FFT (Istogramma Frequenze)
+            createAudioPanel({
+                type: 'fft',
+                position: [12, 5, 0],
+                title: "Istogramma Frequenze (FFT)",
+                color: 0x00ffaa, // Verde
+                width: panelWidth,
+                height: panelHeight,
+                canvasSize: [512, 256]
+            });
+            
+            // Pannello Spettrogramma
+            createAudioPanel({
+                type: 'spectrogram',
+                position: [-12, 5, -20],
+                title: "Spettrogramma (Freq/Tempo)",
+                color: 0xffff00, // Giallo
+                width: panelWidth,
+                height: panelHeight,
+                canvasSize: [256, 256] // Quadrato per lo spettrogramma
+            });
+            
+            // Pannello Livello di Picco
+            createAudioPanel({
+                type: 'peak',
+                position: [12, 5, -20],
+                title: "Livello di Picco (Peak Meter)",
+                color: 0xff00cc, // Magenta
+                width: panelWidth,
+                height: panelHeight,
+                canvasSize: [512, 256]
+            });
+        }
+        
+        /**
+         * Funzione helper per creare un pannello audio 3D.
+         * config: { type, position: [x,y,z], title, color, width, height, canvasSize: [w,h] }
+         */
+        function createAudioPanel(config) {
+            if (!loadedFont) return;
+            
+            const { type, position, title, color, width, height, canvasSize } = config;
+            const panelGroup = new THREE.Group();
+            
+            // 1. Sfondo del pannello (che diventerà il canvas)
+            // Creiamo un canvas 2D in memoria
+            const canvas = document.createElement('canvas');
+            canvas.width = canvasSize[0];
+            canvas.height = canvasSize[1];
+            const context = canvas.getContext('2d');
+            
+            // Sfondo nero iniziale (speciale per spettrogramma)
+            if (type === 'spectrogram') {
+                context.fillStyle = '#000000';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            // Crea la texture dal canvas
+            const texture = new THREE.CanvasTexture(canvas);
+            
+            const panelGeom = new THREE.PlaneGeometry(width, height);
+            const panelMat = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true,
+                opacity: 0.9
+            });
+            const panelMesh = new THREE.Mesh(panelGeom, panelMat);
+            panelGroup.add(panelMesh);
+            
+            // 2. Bordo pulsante
+            const edgesGeom = new THREE.EdgesGeometry(panelGeom);
+            const borderMat = new THREE.LineBasicMaterial({
+                color: color, transparent: true, opacity: 1.0, linewidth: 2
+            });
+            const borderLines = new THREE.LineSegments(edgesGeom, borderMat);
+            borderLines.position.z = 0.01; // Leggermente davanti
+            pulsatingObjects.push(borderMat); // Aggiungi ai materiali da animare
+            panelGroup.add(borderLines);
+            
+            // 3. Titolo (come prima)
+            const titleMat = new THREE.MeshBasicMaterial({ color: color });
+            const titleGeom = new TextGeometry(title, {
+                font: loadedFont, size: 0.4, height: 0.05
+            });
+            titleGeom.computeBoundingBox();
+            const titleWidth = titleGeom.boundingBox.max.x - titleGeom.boundingBox.min.x;
+            const titleMesh = new THREE.Mesh(titleGeom, titleMat);
+            titleMesh.position.set(-titleWidth / 2, height / 2 + 0.3, 0.01);
+            panelGroup.add(titleMesh);
+            
+            // Posiziona il gruppo
+            panelGroup.position.set(position[0], position[1], position[2]);
+            scene.add(panelGroup);
+            
+            // Salva le parti dinamiche per l'aggiornamento
+            dynamicPanels.push({
+                type: type,
+                canvas: canvas,
+                context: context,
+                texture: texture
+            });
+        }
+        
+        // --- Loop di Animazione ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta(); // Tempo trascorso (secondi)
+            const time = clock.getElapsedTime(); // Tempo totale
+
+            updateControls(delta);
+            updateUI(time); // Aggiorna HUD e Pannelli 3D
+            
+            // Animazione bordi pulsanti
+            for (const material of pulsatingObjects) {
+                material.opacity = (Math.sin(time * 5) * 0.5 + 0.5) * 0.7 + 0.3;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Aggiornamento Controlli di Volo ---
+        function updateControls(delta) {
+            const pitchSpeed = Math.PI / 2;
+            const rollSpeed = Math.PI;
+            const yawSpeed = Math.PI / 2;
+            const acceleration = 25.0;
+            const deceleration = 30.0;
+
+            const maxReverseSpeed = -maxSpeed * 0.5; // Imposta una velocità massima all'indietro (es. metà di quella avanti)
+                const friction = acceleration * 0.5 * delta; // Aumenta un po' la frizione
+
+                if (keys.w) {
+                    // Accelera in avanti fino a maxSpeed
+                    currentSpeed = Math.min(maxSpeed, currentSpeed + acceleration * delta);
+                
+                } else if (keys.s) {
+                    // Accelera all'indietro (decelera se si va avanti) fino a maxReverseSpeed
+                    currentSpeed = Math.max(maxReverseSpeed, currentSpeed - deceleration * delta);
+                
+                } else {
+                    // Applica frizione (rallenta verso lo zero, sia da avanti che da indietro)
+                    if (currentSpeed > friction) {
+                        currentSpeed -= friction;
+                    } else if (currentSpeed < -friction) {
+                        currentSpeed += friction;
+                    } else {
+                        currentSpeed = 0; // Si ferma se la velocità è molto bassa
+                    }
+                }
+            
+            if (keys.ArrowUp) player.rotateX(-pitchSpeed * delta);
+            if (keys.ArrowDown) player.rotateX(pitchSpeed * delta);
+            if (keys.ArrowLeft) player.rotateZ(rollSpeed * delta);
+            if (keys.ArrowRight) player.rotateZ(-rollSpeed * delta);
+            if (keys.a) player.rotateY(yawSpeed * delta);
+            if (keys.d) player.rotateY(-yawSpeed * delta);
+
+            player.translateZ(-currentSpeed * delta);
+            if (player.position.y < 1.0) player.position.y = 1.0;
+        }
+
+        // --- Aggiornamento Interfaccia (HUD e Pannelli 3D) ---
+        function updateUI(time) {
+            // 1. Orologio e Barra Velocità (HUD)
+            hudClock.textContent = new Date().toLocaleTimeString('it-IT');
+            speedBar.style.width = `${(currentSpeed / maxSpeed) * 100}%`;
+            
+            // 2. Analisi Audio (se disponibile)
+            if (!analyser) return;
+
+            // Ottieni i dati audio
+            analyser.getByteTimeDomainData(dataArray); // Per Waveform
+            analyser.getByteFrequencyData(frequencyDataArray); // Per FFT e Spettrogramma
+            
+            // 3. Aggiorna i pannelli dinamici 3D
+            for (const panel of dynamicPanels) {
+                const ctx = panel.context;
+                const w = panel.canvas.width;
+                const h = panel.canvas.height;
+
+                // Cancella il canvas (tranne per lo spettrogramma)
+                if (panel.type !== 'spectrogram') {
+                    ctx.fillStyle = '#000015'; // Sfondo scuro
+                    ctx.fillRect(0, 0, w, h);
+                }
+
+                switch (panel.type) {
+                    case 'waveform':
+                        drawWaveform(ctx, w, h, dataArray);
+                        break;
+                    case 'fft':
+                        drawFFT(ctx, w, h, frequencyDataArray);
+                        break;
+                    case 'spectrogram':
+                        drawSpectrogram(ctx, w, h, frequencyDataArray);
+                        break;
+                    case 'peak':
+                        drawPeak(ctx, w, h, frequencyDataArray); // Usiamo freq data per il picco
+                        break;
+                }
+                
+                // Segnala a Three.js di aggiornare la texture
+                panel.texture.needsUpdate = true;
+            }
+        }
+        
+        // --- Funzioni di Disegno su Canvas 2D ---
+        
+        function drawWaveform(ctx, w, h, data) {
+            ctx.strokeStyle = '#00aaff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            const sliceWidth = w * 1.0 / data.length;
+            let x = 0;
+
+            for (let i = 0; i < data.length; i++) {
+                const v = data[i] / 128.0; // Normalizza (0-2)
+                const y = v * h / 2;
+
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            ctx.lineTo(w, h / 2);
+            ctx.stroke();
+        }
+        
+        function drawFFT(ctx, w, h, data) {
+            const barWidth = w / data.length;
+            let x = 0;
+            
+            const gradient = ctx.createLinearGradient(0, 0, 0, h);
+            gradient.addColorStop(0, '#f00'); // Rosso (Alte)
+            gradient.addColorStop(0.5, '#ff0'); // Giallo
+            gradient.addColorStop(1, '#0f0'); // Verde (Basse)
+            ctx.fillStyle = gradient;
+
+            for (let i = 0; i < data.length; i++) {
+                const barHeight = (data[i] / 255.0) * h;
+                ctx.fillRect(x, h - barHeight, barWidth, barHeight);
+                x += barWidth;
+            }
+        }
+        
+        function drawSpectrogram(ctx, w, h, data) {
+            // 1. Sposta l'immagine esistente di 1 pixel a sinistra
+            const imageData = ctx.getImageData(1, 0, w - 1, h);
+            ctx.putImageData(imageData, 0, 0);
+            
+            // 2. Disegna la nuova colonna di dati FFT sulla destra
+            const numBands = data.length;
+            const bandHeight = h / numBands;
+
+            for (let i = 0; i < numBands; i++) {
+                const value = data[i]; // 0-255
+                // Colore HSL: H(0=Rosso, 120=Verde, 240=Blu)
+                // Mappiamo 0-255 -> 240 (Blu, basso) a 0 (Rosso, alto)
+                const hue = 240 - (value / 255) * 240;
+                ctx.fillStyle = `hsl(${hue}, 100%, 50%)`;
+                
+                // Disegna la banda (invertita, frequenze basse in basso)
+                ctx.fillRect(w - 1, h - (i * bandHeight) - bandHeight, 1, bandHeight);
+            }
+        }
+        
+        function drawPeak(ctx, w, h, data) {
+            // Trova il valore di picco
+            let peak = 0;
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] > peak) peak = data[i]; // Valore 0-255
+            }
+            
+            const peakNormalized = peak / 255.0; // Valore 0-1
+            
+            // Calcola dB (0-1 -> -inf a 0 dB)
+            // Aggiungiamo un "floor" per evitare -Infinity
+            const db = 20 * Math.log10(peakNormalized + 0.0001);
+            
+            // Disegna la barra
+            const barWidth = peakNormalized * w * 0.9; // 90% della larghezza
+            const barY = h / 2 - 25;
+            
+            const gradient = ctx.createLinearGradient(0, 0, w, 0);
+            gradient.addColorStop(0, '#0f0');
+            gradient.addColorStop(0.8, '#ff0');
+            gradient.addColorStop(1, '#f00');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(10, barY, barWidth, 50);
+            
+            // Disegna il testo
+            ctx.fillStyle = 'white';
+            ctx.font = '32px Monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(`${db.toFixed(1)} dB`, w - 10, h / 2 + 12);
+        }
+
+        // Helper per la console
+        function logToConsole(message) {
+            consoleLines.push(message);
+            if (consoleLines.length > 6) consoleLines.shift();
+            consoleOut.innerHTML = consoleLines.map(line => `<div>${line}</div>`).join('');
+        }
+
+        // --- Gestione Resize ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Avvio ---
+        init();
+
+    </script>
+</body>
+</html>

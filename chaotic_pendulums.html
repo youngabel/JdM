@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Griglia di Pendoli Caotici</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; /* Nasconde le barre di scorrimento */
+            background-color: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #eee;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        .info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <strong>Griglia di Pendoli Caotici</strong><br>
+        Ogni pendolo ha condizioni iniziali leggermente diverse.<br>
+        <b>Asse X:</b> Angolo iniziale ($\theta_0$)<br>
+        <b>Asse Y:</b> Velocità angolare iniziale ($\omega_0$)<br>
+        Il colore rappresenta la velocità istantanea.
+    </div>
+    <canvas id="pendulumCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('pendulumCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- IMPOSTAZIONI DELLA SIMULAZIONE ---
+        const GRID_SIZE = 70; // Aumenta per più pendoli (potrebbe rallentare)
+        const PENDULUM_LENGTH_SCALE = 0.8; // Lunghezza del pendolo relativa alla cella
+        const g = 9.8; // Accelerazione di gravità
+        const DAMPING = 0.01; // Attrito/smorzamento leggero
+        const MAX_INITIAL_ANGLE = 0.1; // Piccolo angolo iniziale (in radianti)
+        const MAX_INITIAL_VELOCITY = 0.1; // Piccola velocità iniziale
+
+        let pendulums = [];
+        let cellSize;
+
+        // Funzione per mappare un valore da un range a un altro
+        const mapRange = (value, inMin, inMax, outMin, outMax) => {
+            return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+        };
+
+        // Funzione per ottenere il colore in base alla velocità
+        const getColorForVelocity = (velocity) => {
+            // Normalizza la velocità in un range (es. -2 a 2) per mapparla sull'Hue (0-240)
+            // Blu (240) per velocità negative, Rosso (0) per velocità positive
+            const hue = mapRange(velocity, -2, 2, 240, 0);
+            return `hsl(${hue}, 90%, 60%)`;
+        };
+
+        // Inizializza la griglia di pendoli
+        const setup = () => {
+            canvas.width = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+            canvas.height = canvas.width;
+            cellSize = canvas.width / GRID_SIZE;
+            pendulums = [];
+
+            const center = Math.floor(GRID_SIZE / 2);
+
+            for (let i = 0; i < GRID_SIZE; i++) {
+                pendulums[i] = [];
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    // Calcola le condizioni iniziali basate sulla posizione nella griglia
+                    const angle = mapRange(i - center, -center, center, -MAX_INITIAL_ANGLE, MAX_INITIAL_ANGLE);
+                    const velocity = mapRange(j - center, -center, center, -MAX_INITIAL_VELOCITY, MAX_INITIAL_VELOCITY);
+                    
+                    pendulums[i][j] = {
+                        // Partiamo dall'equilibrio instabile (PI = 180 gradi) + una piccola perturbazione
+                        theta: Math.PI + angle,
+                        omega: velocity, // Velocità angolare
+                        alpha: 0, // Accelerazione angolare
+                        color: '#fff'
+                    };
+                }
+            }
+        };
+
+        // Aggiorna lo stato di ogni pendolo
+        const update = () => {
+            const dt = 0.016; // Time step (delta time)
+
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    const p = pendulums[i][j];
+
+                    // Equazione del pendolo smorzato: alpha = -(g/L) * sin(theta) - damping * omega
+                    // Usiamo L=1 per semplicità
+                    p.alpha = (-g * Math.sin(p.theta)) - DAMPING * p.omega;
+                    p.omega += p.alpha * dt;
+                    p.theta += p.omega * dt;
+
+                    // Aggiorna il colore in base alla nuova velocità
+                    p.color = getColorForVelocity(p.omega);
+                }
+            }
+        };
+
+        // Disegna tutti i pendoli sul canvas
+        const draw = () => {
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const pendulumDrawLength = cellSize * PENDULUM_LENGTH_SCALE;
+
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    const p = pendulums[i][j];
+
+                    // Calcola la posizione del perno di ogni pendolo
+                    const pivotX = (i + 0.5) * cellSize;
+                    const pivotY = (j + 0.5) * cellSize;
+
+                    // Calcola la posizione della massa del pendolo
+                    const bobX = pivotX + pendulumDrawLength * Math.sin(p.theta);
+                    const bobY = pivotY + pendulumDrawLength * Math.cos(p.theta);
+
+                    // Disegna il pendolo (un semplice segmento)
+                    ctx.beginPath();
+                    ctx.moveTo(pivotX, pivotY);
+                    ctx.lineTo(bobX, bobY);
+                    ctx.strokeStyle = p.color;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+            }
+        };
+
+        // Loop di animazione principale
+        const animate = () => {
+            update();
+            draw();
+            requestAnimationFrame(animate);
+        };
+
+        // Avvio
+        setup();
+        animate();
+
+        // Ricalcola la griglia se la finestra viene ridimensionata
+        window.addEventListener('resize', setup);
+    </script>
+</body>
+</html>

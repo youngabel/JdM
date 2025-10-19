@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Webcam Synth 🎹</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #282c34;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        h1 {
+            color: #61dafb;
+        }
+        #controls-container {
+            margin: 20px;
+            padding: 15px;
+            background: #20232a;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        #synth-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            margin: auto;
+            border: 4px solid #61dafb;
+            border-radius: 8px;
+            overflow: hidden; /* Nasconde le parti che escono */
+        }
+        /* Il canvas dove disegniamo tutto (tastiera, dita, video) */
+        #output-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        /* Il video sorgente lo nascondiamo,
+           lo usiamo solo come input per MediaPipe e per disegnarlo sul canvas */
+        #webcam {
+            display: none;
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <h1>Webcam Synth 🎹</h1>
+
+    <div id="controls-container">
+        <label for="octave-slider">Ottave: <span id="octave-label">2</span></label>
+        <input type="range" id="octave-slider" min="1" max="3" value="2" step="1">
+    </div>
+
+    <div id="synth-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output-canvas" width="640px" height="480px"></canvas>
+    </div>
+
+    <script>
+        // --- 4.1 RIFERIMENTI AGLI ELEMENTI ---
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const octaveSlider = document.getElementById('octave-slider');
+        const octaveLabel = document.getElementById('octave-label');
+
+        const CANVAS_WIDTH = 640;
+        const CANVAS_HEIGHT = 480;
+        canvasElement.width = CANVAS_WIDTH;
+        canvasElement.height = CANVAS_HEIGHT;
+
+        // --- 4.2 MOTORE AUDIO (WEB AUDIO API) ---
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const activeNotes = {}; // Oggetto per la polifonia (tiene traccia delle note attive)
+
+        // Mappatura delle frequenze (Hz) per 4 ottave
+        const noteFrequencies = {
+            'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81, 'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00, 'A#3': 233.08, 'B3': 246.94,
+            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88,
+            'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'D#5': 622.25, 'E5': 659.25, 'F5': 698.46, 'F#5': 739.99, 'G5': 783.99, 'G#5': 830.61, 'A5': 880.00, 'A#5': 932.33, 'B5': 987.77,
+            'C6': 1046.50
+        };
+
+        function playNote(noteName) {
+            if (!noteFrequencies[noteName] || activeNotes[noteName]) return; // Nota non esiste o è già attiva
+
+            const freq = noteFrequencies[noteName];
+            
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.type = 'triangle'; // Prova 'sine', 'square', 'sawtooth'
+            oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
+            
+            // Connessione
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            // Attack (volume da 0 a 0.5 in 0.05s per evitare "click")
+            gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+            gainNode.gain.linearRampToValueAtTime(0.5, audioContext.currentTime + 0.05);
+
+            oscillator.start();
+            
+            activeNotes[noteName] = { oscillator, gainNode };
+        }
+
+        function stopNote(noteName) {
+            const note = activeNotes[noteName];
+            if (!note) return;
+
+            // Release (volume da 0.5 a 0 in 0.1s)
+            const releaseTime = audioContext.currentTime + 0.1;
+            note.gainNode.gain.linearRampToValueAtTime(0.001, releaseTime); // Usiamo un valore piccolo > 0 per evitare "click"
+            note.oscillator.stop(releaseTime);
+
+            delete activeNotes[noteName];
+        }
+
+        // --- 4.3 LOGICA DELLA TASTIERA ---
+        
+        // Definiamo le note per le nostre ottave
+        const keyLayout = {
+            white: ['C','D','E','F','G','A','B'],
+            black: ['C#','D#','','F#','G#','A#',''] // Spazi vuoti per layout corretto
+        };
+        
+        // Questo array conterrà le coordinate (rect) di ogni tasto disegnato
+        let drawnKeys = [];
+        let notesPressed = new Set(); // Tiene traccia di quali note sono premute in questo frame
+        
+        octaveSlider.oninput = () => {
+            octaveLabel.textContent = octaveSlider.value;
+        };
+
+        function drawKeyboard() {
+            drawnKeys = []; // Svuota l'array dei tasti
+            const numOctaves = parseInt(octaveSlider.value);
+            const totalWhiteKeys = keyLayout.white.length * numOctaves + 1; // +1 per il C finale
+            const keyWidth = CANVAS_WIDTH / totalWhiteKeys;
+            const keyHeight = 150; // Altezza fissa della tastiera (in pixel)
+            const keyboardY = CANVAS_HEIGHT - keyHeight; // Posizione Y della tastiera
+
+            let currentX = 0;
+            let whiteKeyIndex = 0;
+
+            // 1. Disegna i tasti bianchi
+            for (let oct = 0; oct < numOctaves; oct++) {
+                for (let i = 0; i < keyLayout.white.length; i++) {
+                    const noteName = keyLayout.white[i] + (oct + 3); // Partiamo da Ottava 3 (C3)
+                    const keyRect = {
+                        x: currentX,
+                        y: keyboardY,
+                        w: keyWidth,
+                        h: keyHeight,
+                        note: noteName,
+                        color: 'white'
+                    };
+                    
+                    drawnKeys.push(keyRect);
+                    
+                    canvasCtx.fillStyle = notesPressed.has(noteName) ? '#61dafb' : 'white'; // Evidenzia se premuto
+                    canvasCtx.strokeStyle = 'black';
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.fillRect(keyRect.x, keyRect.y, keyRect.w, keyRect.h);
+                    canvasCtx.strokeRect(keyRect.x, keyRect.y, keyRect.w, keyRect.h);
+                    
+                    currentX += keyWidth;
+                    whiteKeyIndex++;
+                }
+            }
+            // Aggiungi l'ultimo tasto C
+            const lastCName = 'C' + (numOctaves + 3);
+            const lastCRect = { x: currentX, y: keyboardY, w: keyWidth, h: keyHeight, note: lastCName, color: 'white' };
+            drawnKeys.push(lastCRect);
+            canvasCtx.fillStyle = notesPressed.has(lastCName) ? '#61dafb' : 'white';
+            canvasCtx.strokeStyle = 'black';
+            canvasCtx.lineWidth = 2;
+            canvasCtx.fillRect(lastCRect.x, lastCRect.y, lastCRect.w, lastCRect.h);
+            canvasCtx.strokeRect(lastCRect.x, lastCRect.y, lastCRect.w, lastCRect.h);
+
+
+            // 2. Disegna i tasti neri (sopra i bianchi)
+            currentX = 0;
+            const blackKeyWidth = keyWidth * 0.6;
+            const blackKeyHeight = keyHeight * 0.6;
+            
+            for (let oct = 0; oct < numOctaves; oct++) {
+                for (let i = 0; i < keyLayout.black.length; i++) {
+                    if (keyLayout.black[i] !== '') {
+                        const noteName = keyLayout.black[i] + (oct + 3);
+                        const keyRect = {
+                            x: currentX + (keyWidth - blackKeyWidth / 2),
+                            y: keyboardY,
+                            w: blackKeyWidth,
+                            h: blackKeyHeight,
+                            note: noteName,
+                            color: 'black'
+                        };
+                        
+                        drawnKeys.push(keyRect);
+                        
+                        canvasCtx.fillStyle = notesPressed.has(noteName) ? '#61dafb' : 'black'; // Evidenzia se premuto
+                        canvasCtx.strokeStyle = 'black';
+                        canvasCtx.lineWidth = 2;
+                        canvasCtx.fillRect(keyRect.x, keyRect.y, keyRect.w, keyRect.h);
+                        canvasCtx.strokeRect(keyRect.x, keyRect.y, keyRect.w, keyRect.h);
+                    }
+                    currentX += keyWidth;
+                }
+            }
+        }
+
+        // --- 4.4 LOGICA DI COLLISIONE E LOOP PRINCIPALE ---
+
+        // Punti di interesse (punte delle dita)
+        const FINGER_TIPS = [4, 8, 12, 16, 20];
+        let notesPreviouslyPressed = new Set(); // Note premute nel frame precedente
+
+        function checkCollisions(multiHandLandmarks) {
+            notesPressed.clear(); // Resetta le note premute in questo frame
+            let fingerTipPoints = []; // Array per le coordinate (x,y) delle dita
+
+            if (multiHandLandmarks) {
+                for (const landmarks of multiHandLandmarks) {
+                    // Estrai le coordinate delle punte delle dita
+                    for (const tipIndex of FINGER_TIPS) {
+                        const landmark = landmarks[tipIndex];
+                        // Converti le coordinate normalizzate (0.0 - 1.0) in coordinate del canvas (0 - 640/480)
+                        // NOTA: l'asse X è specchiato, quindi 1.0 - landmark.x
+                        const x = (1.0 - landmark.x) * CANVAS_WIDTH;
+                        const y = landmark.y * CANVAS_HEIGHT;
+                        fingerTipPoints.push({ x, y });
+
+                        // Disegna un cerchio sulla punta del dito
+                        canvasCtx.fillStyle = '#FF0000'; // Rosso
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(x, y, 8, 0, 2 * Math.PI); // Cerchio di raggio 8
+                        canvasCtx.fill();
+                    }
+                }
+            }
+
+            // --- CONTROLLO COLLISIONE DITA -> TASTI ---
+            
+            const blackKeys = drawnKeys.filter(k => k.color === 'black');
+            const whiteKeys = drawnKeys.filter(k => k.color === 'white');
+
+            for (const finger of fingerTipPoints) {
+                let keyFound = false;
+
+                // 1. Controlla prima i tasti neri
+                for (const key of blackKeys) {
+                    if (isPointInRect(finger, key)) {
+                        notesPressed.add(key.note);
+                        keyFound = true;
+                        break;
+                    }
+                }
+                
+                if (keyFound) continue;
+
+                // 2. Se non ha colpito un tasto nero, controlla i bianchi
+                for (const key of whiteKeys) {
+                    if (isPointInRect(finger, key)) {
+                        notesPressed.add(key.note);
+                        break;
+                    }
+                }
+            }
+            
+            // --- GESTIONE AUDIO (PLAY/STOP) ---
+            
+            // 1. Suona le NUOVE note
+            for (const note of notesPressed) {
+                if (!notesPreviouslyPressed.has(note)) {
+                    // Aggiungiamo un check per assicurarci che l'AudioContext sia partito
+                    // (Molti browser lo bloccano prima di un'interazione utente)
+                    if (audioContext.state === 'suspended') {
+                        audioContext.resume();
+                    }
+                    playNote(note); // Questa è una nuova pressione
+                }
+            }
+
+            // 2. Ferma le note RILASCIATE
+            for (const note of notesPreviouslyPressed) {
+                if (!notesPressed.has(note)) {
+                    stopNote(note); // Questa nota è stata rilasciata
+                }
+            }
+
+            // Aggiorna lo stato per il prossimo frame
+            notesPreviouslyPressed = new Set(notesPressed);
+        }
+        
+        // Funzione helper per la collisione
+        function isPointInRect(point, rect) {
+            return point.x >= rect.x &&
+                   point.x <= rect.x + rect.w &&
+                   point.y >= rect.y &&
+                   point.y <= rect.y + rect.h;
+        }
+
+        // --- 4.5 CONFIGURAZIONE MEDIAPIPE E AVVIO ---
+        
+        console.log("Inizializzazione MediaPipe Hands...");
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` // <-- ECCO IL FIX
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        // QUESTA È LA FUNZIONE LOOP PRINCIPALE
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            // 1. Disegna l'immagine della webcam (specchiata)
+            canvasCtx.translate(CANVAS_WIDTH, 0);
+            canvasCtx.scale(-1, 1);
+            canvasCtx.drawImage(results.image, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            canvasCtx.restore(); // Ripristina la matrice di trasformazione
+
+            // 2. Disegna la tastiera (non specchiata)
+            drawKeyboard();
+
+            // 3. Analizza le collisioni, suona note, e disegna le punte delle dita
+            checkCollisions(results.multiHandLandmarks);
+
+            // 4. (Opzionale) Disegna il resto della mano (scheletro)
+            if (results.multiHandLandmarks) {
+                canvasCtx.save();
+                canvasCtx.translate(CANVAS_WIDTH, 0);
+                canvasCtx.scale(-1, 1); // Specchia di nuovo per disegnare lo scheletro
+                
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, { color: '#FFFFFF', lineWidth: 3, radius: 2 });
+                }
+                canvasCtx.restore();
+            }
+
+            canvasCtx.restore(); // Fine del disegno
+        }
+
+        hands.onResults(onResults);
+
+        // --- 4.6 AVVIO DELLA WEBCAM ---
+        console.log("Avvio della webcam...");
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: CANVAS_WIDTH,
+            height: CANVAS_HEIGHT
+        });
+        camera.start();
+
+        console.log("Webcam Synth avviato. Metti le mani sulla tastiera!");
+
+        // Aggiungiamo un listener per sbloccare l'audio se il browser lo blocca
+        document.body.addEventListener('click', () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+                console.log("AudioContext sbloccato!");
+            }
+        }, { once: true });
+
+    </script>
+</body>
+</html>

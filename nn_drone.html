@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <title>Drone Simulator v2: Frenet Game</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body { margin: 0; font-family: sans-serif; overflow: hidden; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border-radius: 8px;
+            width: 300px;
+        }
+        #info h2 { margin-top: 0; }
+        #score { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+        label { display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="info">
+        <h2>Drone Frenet-Racer</h2>
+        <div id="score">Score: 0</div>
+        <label for="maxSpeed">Velocità Massima (s_vel):</label>
+        <input type="range" id="maxSpeed" min="10" max="100" value="30" style="width: 100%;">
+        
+        <h3>Controlli (Frenet)</h3>
+        <p>
+            <b>W/S:</b> Accelera / Frena (lungo il percorso)<br>
+            <b>A/D:</b> Spostamento laterale (sinistra/destra)<br>
+            <b>R/F:</b> Spostamento verticale (su/giù)<br>
+            <b>Q/E:</b> Imbardata (rotazione) manuale
+        </p>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // === Variabili Globali ===
+        let scene, camera, renderer, clock;
+        let drone, gridHelper;
+        let curve, curveLength, frenetFrames;
+        
+        // Stato del Drone (Coordinate di Frenet)
+        let s = 0; // Distanza percorsa lungo la curva
+        let d = 0; // Spostamento laterale (normale)
+        let h = 0; // Spostamento verticale (binormale)
+
+        let s_vel = 0; // Velocità lungo la curva
+        let d_vel = 0; // Velocità laterale
+        let h_vel = 0; // Velocità verticale
+        let yaw_vel = 0; // Velocità di imbardata
+        let yaw_angle = 0; // Angolo di imbardata manuale
+
+        // Parametri di Gioco
+        let score = 0;
+        let maxSpeed = 30;
+        let checkpoints = [];
+        let checkpointMeshes = [];
+        let t_previous = 0; // Per rilevare il superamento dei checkpoint
+        const keys = {};
+
+        // === Inizializzazione ===
+        function init() {
+            // Setup base
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.Fog(0x87CEEB, 100, 750);
+            
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+            
+            clock = new THREE.Clock();
+
+            // Luci
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            dirLight.position.set(50, 100, 50);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            // Terreno (Griglia)
+            gridHelper = new THREE.GridHelper(1000, 50);
+            scene.add(gridHelper);
+            
+            // Creazione Elementi
+            createDrone();
+            createTrack();
+            createCheckpoints();
+            
+            // Controlli e UI
+            setupControls();
+            setupUI();
+
+            // Avvio loop
+            animate();
+        }
+
+        // === Creazione Elementi ===
+        function createDrone() {
+            const group = new THREE.Group();
+
+            // Corpo
+            const bodyMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+            const bodyGeo = new THREE.BoxGeometry(2, 0.5, 3);
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.castShadow = true;
+            group.add(body);
+
+            // Muso (per capire la direzione)
+            const noseMat = new THREE.MeshPhongMaterial({ color: 0xffff00 });
+            const noseGeo = new THREE.ConeGeometry(0.5, 1, 4);
+            const nose = new THREE.Mesh(noseGeo, noseMat);
+            nose.position.z = 2; // Davanti al corpo
+            nose.rotation.x = Math.PI / 2;
+            group.add(nose);
+            
+            // Rotori (semplificati)
+            const rotorGeo = new THREE.CylinderGeometry(0.8, 0.8, 0.1, 8);
+            const rotorMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+            
+            const rotor1 = new THREE.Mesh(rotorGeo, rotorMat);
+            rotor1.position.set(1.2, 0, 0.8);
+            group.add(rotor1);
+
+            const rotor2 = new THREE.Mesh(rotorGeo, rotorMat);
+            rotor2.position.set(-1.2, 0, 0.8);
+            group.add(rotor2);
+
+            const rotor3 = new THREE.Mesh(rotorGeo, rotorMat);
+            rotor3.position.set(1.2, 0, -0.8);
+            group.add(rotor3);
+
+            const rotor4 = new THREE.Mesh(rotorGeo, rotorMat);
+            rotor4.position.set(-1.2, 0, -0.8);
+            group.add(rotor4);
+
+            drone = group;
+            drone.position.set(0, 5, 0); // Posizione iniziale
+            scene.add(drone);
+        }
+
+        function createTrack() {
+            // Definiamo un percorso 3D interessante
+            const curvePoints = [
+                new THREE.Vector3(0, 5, 0),
+                new THREE.Vector3(100, 10, -50),
+                new THREE.Vector3(150, 20, 50),
+                new THREE.Vector3(50, 15, 150),
+                new THREE.Vector3(-80, 10, 100),
+                new THREE.Vector3(-120, 30, -50),
+                new THREE.Vector3(-50, 5, -100),
+            ];
+
+            // Creiamo la curva (chiusa)
+            curve = new THREE.CatmullRomCurve3(curvePoints, true, 'catmullrom', 0.5);
+            curveLength = curve.getLength();
+            
+            // Calcoliamo i frame di Frenet (100 segmenti)
+            // Questi ci danno Tangente, Normale e Binormale per ogni punto
+            frenetFrames = curve.computeFrenetFrames(100, true);
+
+            // Visualizziamo la curva
+            const points = curve.getPoints(100);
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+            const curveObject = new THREE.Line(geometry, material);
+            scene.add(curveObject);
+        }
+
+        function createCheckpoints() {
+            // Definiamo i checkpoint in base al parametro 't' (0 a 1)
+            checkpoints = [
+                { t: 0.25, passed: false },
+                { t: 0.50, passed: false },
+                { t: 0.75, passed: false }
+            ];
+            
+            const checkpointGeo = new THREE.TorusGeometry(8, 1, 8, 32);
+            const checkpointMat = new THREE.MeshPhongMaterial({ color: 0xffff00, side: THREE.DoubleSide });
+
+            checkpoints.forEach((cp, index) => {
+                const mesh = new THREE.Mesh(checkpointGeo, checkpointMat.clone());
+                
+                // Posiziona il checkpoint
+                const pos = curve.getPointAt(cp.t);
+                mesh.position.copy(pos);
+
+                // Orienta il checkpoint perpendicolarmente al percorso
+                const frameIndex = Math.floor(cp.t * 100);
+                const T = frenetFrames.tangents[frameIndex];
+                const B = frenetFrames.binormals[frameIndex];
+                
+                mesh.up.copy(B); // L'"alto" del toroide segue la binormale
+                mesh.lookAt(pos.clone().add(T)); // Guarda lungo la tangente
+
+                scene.add(mesh);
+                checkpointMeshes.push(mesh);
+            });
+        }
+
+        // === Controlli e UI ===
+        function setupControls() {
+            window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+            window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+        }
+
+        function setupUI() {
+            document.getElementById('maxSpeed').addEventListener('input', (e) => {
+                maxSpeed = parseFloat(e.target.value);
+            });
+        }
+
+        // === Loop di Gioco ===
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            // 1. Gestisci Input Utente
+            handleInput(delta);
+
+            // 2. Aggiorna Stato Drone
+            updateDroneState(delta);
+
+            // 3. Aggiorna Posizione/Rotazione (Transform)
+            updateDroneTransform();
+
+            // 4. Controlla Logica di Gioco
+            checkGameLogic();
+
+            // 5. Aggiorna Camera
+            updateCamera(delta);
+            
+            renderer.render(scene, camera);
+        }
+
+        // --- Funzioni di Aggiornamento ---
+
+        function handleInput(delta) {
+            // Parametri di controllo
+            const acceleration = 25.0;
+            const strafeSpeed = 15.0;
+            const climbSpeed = 10.0;
+            const yawSpeed = 1.5;
+            
+            // Damping (resistenza/frizione)
+            const s_damping = 0.98; // Frizione / resistenza aria
+            const lateral_damping = 0.1; // Rapidità ritorno al centro
+
+            // === Accelerazione (s_vel) ===
+            if (keys['w']) {
+                s_vel = Math.min(maxSpeed, s_vel + acceleration * delta);
+            }
+            if (keys['s']) {
+                s_vel = Math.max(-maxSpeed / 2, s_vel - acceleration * delta);
+            }
+            s_vel *= s_damping; // Applica sempre frizione
+
+            // === Spostamento Laterale (d) ===
+            let target_d_vel = 0;
+            if (keys['a']) target_d_vel = -strafeSpeed;
+            if (keys['d']) target_d_vel = strafeSpeed;
+            // Interpola dolcemente verso la velocità target (crea un "ritorno elastico")
+            d_vel = THREE.MathUtils.lerp(d_vel, target_d_vel, lateral_damping);
+
+            // === Spostamento Verticale (h) ===
+            let target_h_vel = 0;
+            if (keys['r']) target_h_vel = climbSpeed;
+            if (keys['f']) target_h_vel = -climbSpeed;
+            h_vel = THREE.MathUtils.lerp(h_vel, target_h_vel, lateral_damping);
+            
+            // === Imbardata (yaw) ===
+            let target_yaw_vel = 0;
+            if (keys['q']) target_yaw_vel = yawSpeed;
+            if (keys['e']) target_yaw_vel = -yawSpeed;
+            yaw_vel = THREE.MathUtils.lerp(yaw_vel, target_yaw_vel, lateral_damping);
+        }
+
+        function updateDroneState(delta) {
+            // Aggiorna le coordinate di Frenet in base alle velocità
+            s += s_vel * delta;
+            d += d_vel * delta;
+            h += h_vel * delta;
+            yaw_angle += yaw_vel * delta;
+
+            // Fai "rimbalzare" lo spostamento laterale/verticale (opzionale)
+            // d = Math.sin(clock.getElapsedTime()) * 5; // Esempio di movimento automatico
+            
+            // Gestione Loop del percorso!
+            if (s > curveLength) {
+                s -= curveLength;
+            } else if (s < 0) {
+                s += curveLength;
+            }
+        }
+
+        function updateDroneTransform() {
+            // Converte le coordinate (s, d, h) in posizione e rotazione 3D
+            
+            const t = s / curveLength; // Parametro 't' (0-1) della curva
+            
+            // Ottieni il frame di Frenet più vicino
+            // (Usiamo 100 frame precalcolati)
+            const index = Math.max(0, Math.min(99, Math.floor(t * 100)));
+            const T = frenetFrames.tangents[index];
+            const N = frenetFrames.normals[index];
+            const B = frenetFrames.binormals[index];
+
+            // Posizione base sulla curva
+            const P_curve = curve.getPointAt(t);
+
+            // Calcola posizione finale: P_curva + (Normale * d) + (Binormale * h)
+            drone.position.copy(P_curve)
+                .addScaledVector(N, d)
+                .addScaledVector(B, h);
+
+            // Calcola rotazione
+            // 1. L'"alto" del drone (up) è la Binormale (B)
+            //    Questo fa sì che il drone si "inclini" con la curva.
+            drone.up.copy(B);
+            
+            // 2. Il drone "guarda" avanti lungo la Tangente (T)
+            const lookAtTarget = P_curve.clone().add(T);
+            drone.lookAt(lookAtTarget);
+
+            // 3. Applica l'imbardata (yaw) manuale aggiuntiva
+            //    Ruota attorno all'asse "alto" del drone (che è B)
+            drone.rotateOnAxis(B, yaw_angle);
+        }
+
+        function checkGameLogic() {
+            const t_current = s / curveLength;
+
+            // Controlla superamento checkpoint
+            checkpoints.forEach((cp, index) => {
+                // Abbiamo superato il checkpoint in questo frame?
+                if (!cp.passed && t_previous < cp.t && t_current >= cp.t) {
+                    cp.passed = true;
+                    score += 100;
+                    checkpointMeshes[index].material.color.set(0x00ff00); // Verde = Preso
+                    updateScoreDisplay();
+                }
+            });
+
+            // Controlla superamento traguardo (loop)
+            // Se eravamo alla fine (t > 0.95) e ora siamo all'inizio (t < 0.05)
+            if (t_previous > 0.95 && t_current < 0.05) {
+                score += 500; // Bonus fine giro
+                resetLap();
+                updateScoreDisplay();
+            }
+
+            t_previous = t_current; // Salva 't' per il prossimo frame
+        }
+        
+        function resetLap() {
+            // Resetta i checkpoint per il nuovo giro
+            checkpoints.forEach(cp => cp.passed = false);
+            checkpointMeshes.forEach(mesh => mesh.material.color.set(0xffff00)); // Giallo
+            
+            // Qui potremmo anche resettare lo score se volessimo
+            // score = 0;
+            console.log("Nuovo Giro! Punteggio attuale:", score);
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('score').innerText = 'Score: ' + score;
+        }
+
+        function updateCamera(delta) {
+            // Camera "inseguimento" (chase cam)
+            
+            // Ottieni T e B correnti (come in updateDroneTransform)
+            const t = s / curveLength;
+            const index = Math.max(0, Math.min(99, Math.floor(t * 100)));
+            const T = frenetFrames.tangents[index];
+            const B = frenetFrames.binormals[index];
+
+            // Calcola la posizione desiderata: 20 unità *dietro* e 8 *sopra*
+            // (relativo alla rotazione della pista!)
+            const offset = new THREE.Vector3()
+                .copy(T)
+                .multiplyScalar(-20)     // Dietro
+                .addScaledVector(B, 8); // Sopra
+
+            const camTargetPos = drone.position.clone().add(offset);
+            
+            // Interpola dolcemente la posizione della camera
+            camera.position.lerp(camTargetPos, 0.05); // 0.05 = velocità inseguimento
+            
+            // La camera guarda sempre il drone
+            camera.lookAt(drone.position);
+        }
+
+        // Gestione resize finestra
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Avvio
+        init();
+    </script>
+</body>
+</html>

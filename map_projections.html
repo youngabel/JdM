@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proiezioni Cartografiche</title>
+    
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://d3js.org/d3-geo-projection.v4.min.js"></script>
+    <script src="https://unpkg.com/topojson@3"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        /* --- STILI GLOBALI E STILE "BLU" RICHIESTO --- */
+        html, body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0f172a; /* Blu scuro/nero */
+            color: #e2e8f0;
+        }
+
+        /* --- VISTA GRIGLIA (PRINCIPALE) --- */
+        #grid-view {
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 20px;
+        }
+
+        .header h1 {
+            color: #94a3b8;
+            margin: 0;
+        }
+
+        .header p {
+            color: #64748b;
+            margin: 5px 0;
+            font-size: 1.1em;
+        }
+
+        #grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            padding: 10px;
+        }
+
+        .map-box {
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background-color: #1e293b;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            overflow: hidden;
+        }
+
+        .map-box:hover {
+            transform: scale(1.03);
+            box-shadow: 0 0 20px #38bdf880;
+        }
+
+        .map-box h3 {
+            text-align: center;
+            color: #cbd5e1;
+            margin: 15px 0;
+            font-weight: 500;
+        }
+
+        .map-box svg {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* --- STILI MAPPE (GRID + FULLSCREEN) --- */
+        .sphere {
+            fill: #1d4ed8; /* Blu oceano profondo */
+        }
+        .graticule {
+            fill: none;
+            stroke: #3b82f6; /* Blu più chiaro */
+            stroke-width: 0.5px;
+            opacity: 0.5;
+        }
+        .land {
+            fill: #475569; /* Grigio-blu per la terra */
+        }
+        .country-border {
+            fill: none;
+            stroke: #94a3b8; /* Confini chiari e visibili */
+            stroke-width: 0.7px;
+        }
+        .country-hover {
+            fill: #38bdf8; /* Azzurro brillante */
+            opacity: 0.8;
+        }
+        
+        /* Stile speciale per le shorelines */
+        .shoreline-bg {
+            background-color: #0f172a; /* Sfondo scuro per le shorelines */
+        }
+        .shoreline {
+            fill: none;
+            stroke: #38bdf8; /* Azzurro brillante per le linee */
+            stroke-width: 1px;
+        }
+
+        /* --- VISTA FULLSCREEN --- */
+        #fullscreen-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #0f172a;
+            z-index: 1000;
+            display: none; /* Nascosto di default */
+            flex-direction: column;
+        }
+
+        .fullscreen-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background-color: #1e293b;
+            border-bottom: 1px solid #334155;
+            flex-shrink: 0;
+        }
+
+        .fullscreen-header h2 {
+            margin: 0;
+            color: #e2e8f0;
+        }
+
+        .fullscreen-header button {
+            background-color: #38bdf8;
+            color: #0f172a;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+            margin-left: 10px;
+        }
+
+        .fullscreen-header button:hover {
+            background-color: #7dd3fc;
+        }
+
+        #fullscreen-map {
+            flex-grow: 1;
+            width: 100%;
+            height: calc(100% - 65px); /* Altezza meno l'header */
+            overflow: hidden;
+        }
+
+        #fullscreen-map svg {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* --- TOOLTIP --- */
+        #tooltip {
+            position: absolute;
+            display: none;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            pointer-events: none;
+            z-index: 2000;
+        }
+        
+        /* --- CONTENITORE PER STAMPA PDF (Nascosto) --- */
+        #print-container {
+            display: none;
+            position: absolute;
+            left: -9999px; /* Fuori schermo */
+            width: 297mm; /* A4 Landscape */
+            height: 210mm;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: Arial, sans-serif;
+        }
+        
+        .print-header-top {
+            position: absolute;
+            top: 10mm;
+            left: 10mm;
+            right: 10mm;
+            display: flex;
+            justify-content: space-between;
+            font-size: 10pt;
+            color: #94a3b8;
+        }
+        
+        .print-title {
+            position: absolute;
+            top: 20mm;
+            left: 10mm;
+            right: 10mm;
+            text-align: center;
+            font-size: 16pt;
+            font-weight: bold;
+            color: #e2e8f0;
+        }
+        
+        #print-map-target {
+            position: absolute;
+            top: 40mm;
+            left: 10mm;
+            width: 277mm; /* 297 - 10 - 10 */
+            height: 160mm; /* 210 - 40 - 10 */
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="grid-view">
+        <div class="header">
+            <h1>Proiezioni Cartografiche 2D</h1>
+            <p id="header-docente">Docente: Mario Rossi</p>
+            <p id="header-istituto">Istituto: Università degli Studi di Geografia</p>
+            </div>
+
+        <div id="grid-container">
+            </div>
+    </div>
+
+    <div id="fullscreen-overlay">
+        <div class="fullscreen-header">
+            <h2 id="fullscreen-title"></h2>
+            <div>
+                <button id="export-pdf-button">Esporta PDF</button>
+                <button id="back-button">Torna alla Griglia</button>
+            </div>
+        </div>
+        <div id="fullscreen-map"></div>
+    </div>
+
+    <div id="tooltip"></div>
+
+    <div id="print-container">
+        <div class="print-header-top">
+            <span id="print-docente"></span>
+            <span id="print-istituto"></span>
+        </div>
+        <div class="print-title" id="print-map-title"></div>
+        <div id="print-map-target"></div>
+    </div>
+
+
+    <script>
+        // Variabili globali
+        let worldData, countries, land;
+        const gridView = d3.select("#grid-view");
+        const gridContainer = d3.select("#grid-container");
+        const fullscreenOverlay = d3.select("#fullscreen-overlay");
+        const fullscreenMap = d3.select("#fullscreen-map");
+        const fullscreenTitle = d3.select("#fullscreen-title");
+        const tooltip = d3.select("#tooltip");
+
+        const gridViewBox = { width: 960, height: 500 };
+
+        // --- CONFIGURAZIONE ESPANDIBILE ---
+        // Per aggiungere mappe, basta aggiungere un oggetto qui
+        const projectionsConfig = [
+            {
+                name: "Natural Earth I",
+                projection: d3.geoNaturalEarth1()
+            },
+            {
+                name: "Spilhaus (Oceani)",
+                projection: d3.geoGringorten(), // Richiede d3-geo-projection.js
+                type: 'shoreline' // Tipo speciale per stile diverso
+            },
+            {
+                name: "Ortografica (Globo)",
+                projection: d3.geoOrthographic().rotate([20, -20])
+            },
+            {
+                name: "Mercatore",
+                projection: d3.geoMercator()
+            },
+            {
+                name: "Equirettangolare",
+                projection: d3.geoEquirectangular()
+            },
+            {
+                name: "Winkel III",
+                projection: d3.geoWinkel3()
+            }
+        ];
+
+
+        // Funzione di Inizializzazione
+        async function init() {
+            try {
+                // Carica i dati geografici
+                worldData = await d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json");
+                
+                // Converte TopoJSON in GeoJSON
+                land = topojson.feature(worldData, worldData.objects.land);
+                countries = topojson.feature(worldData, worldData.objects.countries);
+
+                // Disegna la griglia ora che i dati sono pronti
+                drawGridMaps();
+
+                // Imposta i listener per i bottoni
+                d3.select("#back-button").on("click", hideFullscreen);
+                d3.select("#export-pdf-button").on("click", exportPDF);
+
+            } catch (error)
+            {
+                console.error("Errore nel caricamento dei dati Geo:", error);
+                gridContainer.text("Impossibile caricare i dati della mappa.");
+            }
+        }
+
+        // Disegna tutte le mappe nella griglia
+        function drawGridMaps() {
+            projectionsConfig.forEach(config => {
+                const mapBox = gridContainer.append("div")
+                    .attr("class", "map-box")
+                    .on("click", () => showFullscreen(config));
+
+                mapBox.append("h3").text(config.name); // Label
+
+                const svg = mapBox.append("svg")
+                    .attr("viewBox", `0 0 ${gridViewBox.width} ${gridViewBox.height}`)
+                    .attr("preserveAspectRatio", "xMidYMid meet");
+                
+                if (config.type === 'shoreline') {
+                    svg.classed('shoreline-bg', true);
+                }
+                
+                // Adattiamo la proiezione allo spazio del viewBox
+                // La scelta dell'oggetto per il 'fit' è cruciale
+                const fitObject = (config.type === 'shoreline') ? land : countries;
+                config.projection.fitSize([gridViewBox.width, gridViewBox.height], fitObject);
+
+                drawMap(svg, config, 'grid');
+            });
+        }
+
+        /**
+         * Funzione generica per disegnare una mappa
+         * @param {d3.Selection} svg - La selezione D3 dell'SVG su cui disegnare
+         * @param {object} config - L'oggetto di configurazione (name, projection, type)
+         * @param {'grid' | 'fullscreen'} mode - La modalità di disegno
+         */
+        function drawMap(svg, config, mode) {
+            
+            const path = d3.geoPath(config.projection);
+            const g = svg.append("g");
+
+            // 1. Sfera (Oceano)
+            if (config.type !== 'shoreline') {
+                g.append("path")
+                    .datum({ type: "Sphere" })
+                    .attr("class", "sphere")
+                    .attr("d", path);
+            }
+
+            // 2. Reticolo
+            g.append("path")
+                .datum(d3.geoGraticule10())
+                .attr("class", "graticule")
+                .attr("d", path);
+
+            // 3. Terraferma o Linee di costa
+            if (config.type === 'shoreline') {
+                // Stile Shoreline: solo contorni
+                g.append("path")
+                    .datum(land)
+                    .attr("class", "shoreline")
+                    .attr("d", path);
+            } else {
+                // Stile Standard: terra piena e confini
+                
+                // Terra (tutte le nazioni)
+                const countriesPaths = g.append("g")
+                    .selectAll("path")
+                    .data(countries.features)
+                    .join("path")
+                    .attr("class", "land")
+                    .attr("d", path);
+
+                // Confini (tra nazioni diverse)
+                g.append("path")
+                    .datum(topojson.mesh(worldData, worldData.objects.countries, (a, b) => a !== b))
+                    .attr("class", "country-border")
+                    .attr("d", path);
+
+                // Interazioni (solo in fullscreen)
+                if (mode === 'fullscreen') {
+                    countriesPaths
+                        .on("mouseover", function(event, d) {
+                            d3.select(this).classed("country-hover", true);
+                            tooltip.style("display", "block")
+                                   .html(d.properties.name); // Nome nazione
+                        })
+                        .on("mousemove", function(event) {
+                            tooltip.style("left", (event.pageX + 10) + "px")
+                                   .style("top", (event.pageY - 10) + "px");
+                        })
+                        .on("mouseout", function() {
+                            d3.select(this).classed("country-hover", false);
+                            tooltip.style("display", "none");
+                        });
+                }
+            }
+            
+            // 4. Zoom (solo in fullscreen)
+            if (mode === 'fullscreen') {
+                const zoom = d3.zoom()
+                    .scaleExtent([1, 10])
+                    .on("zoom", (event) => {
+                        g.attr("transform", event.transform);
+                    });
+                svg.call(zoom.transform, d3.zoomIdentity);
+                svg.call(zoom);
+            }
+        }
+
+        // Mostra una mappa in modalità fullscreen
+        function showFullscreen(config) {
+            // Pulisci la mappa precedente
+            fullscreenMap.html("");
+            
+            // Imposta il titolo
+            fullscreenTitle.text(config.name);
+            
+            // Salva il nome per l'export PDF
+            fullscreenOverlay.attr("data-current-projection", config.name);
+
+            // Nascondi la griglia e mostra l'overlay
+            gridView.style("display", "none");
+            fullscreenOverlay.style("display", "flex");
+
+            // --- INIZIO DELLA CORREZIONE DEFINITIVA ---
+
+            // 1. Crea l'SVG
+            const svg = fullscreenMap.append("svg");
+            
+            if (config.type === 'shoreline') {
+                svg.classed('shoreline-bg', true);
+            }
+            
+            // 2. Imposta il viewBox IDENTICO a quello della griglia
+            svg.attr("viewBox", `0 0 ${gridViewBox.width} ${gridViewBox.height}`)
+               .attr("preserveAspectRatio", "xMidYMid meet");
+            
+            // 3. Clona la proiezione per non modificare quella nella griglia
+            const fullscreenProjection = config.projection.copy();
+            
+            // 4. Determina l'oggetto corretto per il 'fit'
+            //    (QUESTA ERA LA RIGA SBAGLIATA NELLE VERSIONI PRECEDENTI)
+            const fitObject = (config.type === 'shoreline') ? land : countries;
+            
+            // 5. Adatta la proiezione clonata allo STESSO viewBox e OGGETTO della griglia
+            fullscreenProjection.fitSize([gridViewBox.width, gridViewBox.height], fitObject);
+
+            // 6. Crea una config temporanea per la funzione drawMap
+            const fullscreenConfig = {
+                ...config,
+                projection: fullscreenProjection // Usa la proiezione appena adattata
+            };
+
+            // 7. Disegna la mappa in modalità fullscreen
+            drawMap(svg, fullscreenConfig, 'fullscreen');
+
+            // --- FINE DELLA CORREZIONE ---
+        }
+
+        // Nascondi la modalità fullscreen
+        function hideFullscreen() {
+            fullscreenOverlay.style("display", "none");
+            gridView.style("display", "block"); // Rimostra la griglia
+            
+            // Pulisci l'SVG per liberare memoria
+            fullscreenMap.html("");
+        }
+
+        // Esporta la vista corrente in PDF
+        async function exportPDF() {
+            console.log("Inizio esportazione PDF...");
+            const { jsPDF } = window.jspdf;
+            
+            const docente = document.getElementById("header-docente").textContent;
+            const istituto = document.getElementById("header-istituto").textContent;
+            const mapTitle = fullscreenOverlay.attr("data-current-projection");
+
+            document.getElementById("print-docente").textContent = docente;
+            document.getElementById("print-istituto").textContent = istituto;
+            document.getElementById("print-map-title").textContent = mapTitle;
+            
+            // Clona l'SVG della mappa
+            const originalSvg = fullscreenMap.select("svg").node();
+            const clonedSvg = originalSvg.cloneNode(true);
+            
+            // Resetta lo zoom prima di clonare per il PDF
+            d3.select(clonedSvg).select('g').attr('transform', null);
+            
+            const printMapTarget = document.getElementById("print-map-target");
+            printMapTarget.innerHTML = "";
+            printMapTarget.appendChild(clonedSvg);
+            
+            d3.select(clonedSvg).attr("width", "100%").attr("height", "100%");
+
+            const printContainer = document.getElementById("print-container");
+            printContainer.style.display = "block"; // Mostra (ma fuori schermo)
+
+            try {
+                // Renderizza il contenitore di stampa
+                const canvas = await html2canvas(printContainer, {
+                    scale: 2, // Alta risoluzione
+                    backgroundColor: "#0f172a",
+                    useCORS: true
+                });
+
+                // Crea il PDF
+                const imgData = canvas.toDataURL("image/png");
+                const doc = new jsPDF('l', 'mm', 'a4'); // Landscape
+                
+                const pdfWidth = doc.internal.pageSize.getWidth();
+                const pdfHeight = doc.internal.pageSize.getHeight();
+                
+                doc.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+                doc.save(`${mapTitle.replace(/ /g, '_')}.pdf`);
+                
+            } catch (error) {
+                console.error("Errore durante la creazione del PDF:", error);
+                alert("Si è verificato un errore durante l'esportazione del PDF.");
+            } finally {
+                // Nascondi di nuovo il contenitore di stampa
+                printContainer.style.display = "none";
+                printMapTarget.innerHTML = "";
+                console.log("Esportazione PDF completata.");
+            }
+        }
+
+
+        // Avvia l'applicazione
+        document.addEventListener("DOMContentLoaded", init);
+
+    </script>
+</body>
+</html>
